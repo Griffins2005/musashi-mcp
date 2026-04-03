@@ -8,6 +8,11 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { randomBytes } from 'crypto';
 import { hourlyRateLimiter } from './rate-limiter.js';
+import {
+  handleOAuthAuthorize,
+  handleOAuthDiscovery,
+  handleOAuthToken,
+} from './oauth-handler.js';
 
 // Supported MCP protocol version
 const SUPPORTED_PROTOCOL_VERSION = '2025-06-18';
@@ -82,6 +87,7 @@ export class StreamableHttpServer {
 
     // JSON body parsing
     this.app.use(express.json());
+    this.app.use(express.urlencoded({ extended: true }));
 
     // Request logging
     this.app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -108,6 +114,11 @@ export class StreamableHttpServer {
         memory_usage: process.memoryUsage(),
       });
     });
+
+    this.app.get('/.well-known/oauth-authorization-server', handleOAuthDiscovery);
+    this.app.get('/oauth/authorize', handleOAuthAuthorize);
+    this.app.post('/oauth/authorize', handleOAuthAuthorize);
+    this.app.post('/oauth/token', handleOAuthToken);
 
     // Single MCP endpoint - handles POST, GET, DELETE
     this.app.all('/mcp', async (req: Request, res: Response) => {
@@ -136,6 +147,10 @@ export class StreamableHttpServer {
         error: 'Not found',
         available_endpoints: [
           'GET /health',
+          'GET /.well-known/oauth-authorization-server',
+          'GET /oauth/authorize',
+          'POST /oauth/authorize',
+          'POST /oauth/token',
           'POST /mcp (send JSON-RPC messages)',
           'GET /mcp (open SSE stream)',
           'DELETE /mcp (terminate session)',

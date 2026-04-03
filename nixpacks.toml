@@ -1,11 +1,12 @@
 [phases.setup]
 nixPkgs = ["nodejs"]
+cmds = ["corepack enable"]
 
 [phases.install]
-cmds = ["npm install"]
+cmds = ["pnpm install --frozen-lockfile"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["pnpm run build"]
 
 [start]
-cmd = "node dist/index.js --transport=http"
+cmd = "pnpm run start:http"

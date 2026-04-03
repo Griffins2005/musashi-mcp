@@ -14,6 +14,8 @@ It exposes Musashi market intelligence as MCP tools, but now treats `musashi-api
 
 `musashi-mcp` does not perform market analysis by itself. It forwards requests to `musashi-api`, then formats those responses as MCP tool results.
 
+The HTTP transport also supports OAuth discovery and authorization endpoints so remote MCP clients such as `claude.ai` can connect through an OAuth-style flow while still using Musashi API keys underneath.
+
 ## Supported tools
 
 - `analyze_text`
@@ -43,6 +45,8 @@ http://127.0.0.1:3000
 - `PORT`: HTTP transport port when running with `--transport=http`
 - `MUSASHI_MCP_API_KEY`: optional API key used by the included HTTP transport auth helpers
 - `MCP_API_KEYS`: optional comma-separated list of valid API keys for HTTP transport auth helpers
+
+At least one valid key in `MUSASHI_MCP_API_KEY` or `MCP_API_KEYS` is recommended if you want to use the OAuth authorization form.
 
 ## Scripts
 
@@ -87,6 +91,10 @@ MUSASHI_API_BASE_URL=http://127.0.0.1:3000 PORT=3030 pnpm dev:http
 Once running, the main endpoints are:
 
 - `GET /health`
+- `GET /.well-known/oauth-authorization-server`
+- `GET /oauth/authorize`
+- `POST /oauth/authorize`
+- `POST /oauth/token`
 - `POST /mcp`
 - `GET /mcp`
 - `DELETE /mcp`
@@ -95,6 +103,12 @@ If you run the HTTP transport locally with `PORT=3030`, the health endpoint will
 
 ```text
 http://127.0.0.1:3030/health
+```
+
+OAuth discovery will be available at:
+
+```text
+http://127.0.0.1:3030/.well-known/oauth-authorization-server
 ```
 
 ## Local development flow
@@ -140,6 +154,12 @@ MUSASHI_API_BASE_URL=https://musashi-api.vercel.app
 PORT=3030
 ```
 
+### MCP auth
+
+```bash
+MUSASHI_MCP_API_KEY=mcp_sk_your_key_here
+```
+
 ## Testing
 
 ### Automated checks currently available
@@ -151,7 +171,7 @@ The checks that exist today are:
 - `pnpm build`
   Confirms the server compiles successfully to `dist/`
 - `pnpm test`
-  Builds the project, validates API key helper behavior, and verifies that the streamable HTTP transport starts and serves `/health`
+  Builds the project, validates API key helper behavior, and verifies that the streamable HTTP transport serves `/health` plus OAuth discovery metadata
 
 Recommended baseline verification:
 
@@ -186,6 +206,32 @@ You should get JSON containing fields such as:
 - `transport`
 - `protocol_version`
 - `active_sessions`
+
+#### Verify OAuth discovery
+
+If you are using `pnpm dev:http`:
+
+```bash
+curl http://127.0.0.1:3030/.well-known/oauth-authorization-server
+```
+
+You should get JSON containing:
+
+- `issuer`
+- `authorization_endpoint`
+- `token_endpoint`
+- `response_types_supported`
+- `grant_types_supported`
+
+#### Verify the authorization form
+
+Open this URL in a browser:
+
+```text
+http://127.0.0.1:3030/oauth/authorize?redirect_uri=http://127.0.0.1/callback&state=test-state
+```
+
+You should see a simple Musashi authorization form that accepts a valid MCP API key.
 
 #### Verify MCP tool exposure
 
@@ -239,6 +285,7 @@ For the HTTP transport:
 - CORS is restricted to an allowlist in [streamable-http-server.ts](../musashi-mcp/src/server/streamable-http-server.ts)
 - rate limiting is enabled
 - optional API key helpers are available through `MUSASHI_MCP_API_KEY` or `MCP_API_KEYS`
+- OAuth authorization codes are stored in memory and expire automatically
 
 ## Current limitations
 

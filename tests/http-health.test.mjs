@@ -82,3 +82,31 @@ test('HTTP transport serves a healthy status endpoint', async (t) => {
   assert.equal(typeof payload.uptime_seconds, 'number');
   assert.match(logs, /Streamable HTTP/);
 });
+
+test('HTTP transport exposes OAuth discovery metadata', async (t) => {
+  const port = 3600 + Math.floor(Math.random() * 300);
+  const child = spawn(process.execPath, ['dist/index.js', '--transport=http'], {
+    cwd: new URL('..', import.meta.url),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      MUSASHI_API_BASE_URL: 'http://127.0.0.1:3000',
+      MUSASHI_MCP_API_KEY: 'mcp_sk_test_oauth_key',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  t.after(async () => {
+    await stopChildProcess(child);
+  });
+
+  const discoveryResponse = await waitForHealth(
+    `http://127.0.0.1:${port}/.well-known/oauth-authorization-server`
+  );
+  const discovery = await discoveryResponse.json();
+
+  assert.equal(discovery.authorization_endpoint, `http://127.0.0.1:${port}/oauth/authorize`);
+  assert.equal(discovery.token_endpoint, `http://127.0.0.1:${port}/oauth/token`);
+  assert.deepEqual(discovery.response_types_supported, ['code']);
+  assert.deepEqual(discovery.grant_types_supported, ['authorization_code']);
+});

@@ -59,9 +59,17 @@ export class StreamableHttpServer {
   private setupMiddleware(): void {
     // CORS configuration - MUST validate Origin to prevent DNS rebinding
     const ALLOWED_ORIGINS = [
+      // OpenAI clients
+      'https://chatgpt.com',
+      'https://www.chatgpt.com',
+      'https://chat.openai.com',
+
+      // Anthropic clients
       'https://claude.ai',
       'https://www.claude.ai',
       'https://api.anthropic.com',
+
+      // Local development
       'http://localhost:3000',
       'http://localhost:5173',
     ];

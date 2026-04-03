@@ -74,7 +74,7 @@ export class StreamableHttpServer {
       'http://localhost:5173',
     ];
 
-    this.app.use(cors({
+    const corsMiddleware = cors({
       origin: (origin, callback) => {
         // Security: Validate Origin header to prevent DNS rebinding attacks
         if (!origin) {
@@ -92,7 +92,18 @@ export class StreamableHttpServer {
       },
       credentials: true,
       exposedHeaders: ['Mcp-Session-Id'],
-    }));
+    });
+
+    this.app.use((req: Request, res: Response, next: NextFunction) => {
+      // OAuth authorize is served as a top-level page and form POST, not a cross-origin API.
+      // Bypass CORS here so the browser can render and submit the authorization form normally.
+      if (req.path === '/oauth/authorize') {
+        next();
+        return;
+      }
+
+      corsMiddleware(req, res, next);
+    });
 
     // JSON body parsing
     this.app.use(express.json());

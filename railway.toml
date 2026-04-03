@@ -1,9 +1,9 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install && npm run build"
+buildCommand = "npm install -g pnpm@10.30.1 && pnpm install --frozen-lockfile && pnpm run build"
 
 [deploy]
-startCommand = "node dist/index.js --transport=http"
+startCommand = "pnpm run start:http"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"

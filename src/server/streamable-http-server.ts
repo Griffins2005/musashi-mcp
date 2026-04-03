@@ -534,11 +534,11 @@ export class StreamableHttpServer {
   async start(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.server = this.app.listen(port, '127.0.0.1', () => {
-          console.log(`[Streamable HTTP] MCP server listening on http://127.0.0.1:${port}`);
+        this.server = this.app.listen(port, '0.0.0.0', () => {
+          console.log(`[Streamable HTTP] MCP server listening on http://0.0.0.0:${port}`);
           console.log(`[Streamable HTTP] Protocol version: ${SUPPORTED_PROTOCOL_VERSION}`);
-          console.log(`[Streamable HTTP] Health check: http://127.0.0.1:${port}/health`);
-          console.log(`[Streamable HTTP] MCP endpoint: http://127.0.0.1:${port}/mcp`);
+          console.log(`[Streamable HTTP] Health check: http://0.0.0.0:${port}/health`);
+          console.log(`[Streamable HTTP] MCP endpoint: http://0.0.0.0:${port}/mcp`);
           resolve();
         });
 

@@ -46,6 +46,7 @@ export class StreamableHttpServer {
 
   constructor(options: StreamableHttpServerOptions) {
     this.app = express();
+    this.app.set('trust proxy', true);
     this.onRequest = options.onRequest;
     this.onNotification = options.onNotification;
     this.onResponse = options.onResponse;

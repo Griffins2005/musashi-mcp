@@ -92,7 +92,16 @@ class MusashiMcpServer {
   }
 
   private registerToolHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => this.listTools());
+
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const { name, arguments: args } = request.params;
+      return this.callTool(name, args ?? {});
+    });
+  }
+
+  private listTools(): JsonRecord {
+    return {
       tools: [
         {
           name: 'analyze_text',
@@ -187,39 +196,37 @@ class MusashiMcpServer {
           },
         },
       ],
-    }));
+    };
+  }
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
-
-      try {
-        switch (name) {
-          case 'analyze_text':
-            return await this.handleAnalyzeText(args ?? {});
-          case 'get_arbitrage':
-            return await this.handleGetArbitrage(args ?? {});
-          case 'get_movers':
-            return await this.handleGetMovers(args ?? {});
-          case 'ground_probability':
-            return await this.handleGroundProbability(args ?? {});
-          case 'get_feed':
-            return await this.handleGetFeed(args ?? {});
-          case 'get_feed_stats':
-            return await this.handleGetFeedStats();
-          case 'get_feed_accounts':
-            return await this.handleGetFeedAccounts();
-          case 'get_health':
-            return await this.handleGetHealth();
-          default:
-            return buildTextResult([`Unknown tool: ${name}`], true);
-        }
-      } catch (error) {
-        return buildTextResult(
-          [error instanceof Error ? error.message : 'Unknown MCP tool error'],
-          true
-        );
+  private async callTool(name: string, args: JsonRecord): Promise<JsonRecord> {
+    try {
+      switch (name) {
+        case 'analyze_text':
+          return await this.handleAnalyzeText(args);
+        case 'get_arbitrage':
+          return await this.handleGetArbitrage(args);
+        case 'get_movers':
+          return await this.handleGetMovers(args);
+        case 'ground_probability':
+          return await this.handleGroundProbability(args);
+        case 'get_feed':
+          return await this.handleGetFeed(args);
+        case 'get_feed_stats':
+          return await this.handleGetFeedStats();
+        case 'get_feed_accounts':
+          return await this.handleGetFeedAccounts();
+        case 'get_health':
+          return await this.handleGetHealth();
+        default:
+          return buildTextResult([`Unknown tool: ${name}`], true);
       }
-    });
+    } catch (error) {
+      return buildTextResult(
+        [error instanceof Error ? error.message : 'Unknown MCP tool error'],
+        true
+      );
+    }
   }
 
   private async handleAnalyzeText(args: JsonRecord): Promise<JsonRecord> {
@@ -586,15 +593,14 @@ class MusashiMcpServer {
     }
 
     if (method === 'tools/list') {
-      const tools = await this.server.request({ method: 'tools/list' }, ListToolsRequestSchema);
-      return { jsonrpc: '2.0', id, result: tools };
+      return { jsonrpc: '2.0', id, result: this.listTools() };
     }
 
     if (method === 'tools/call') {
-      const result = await this.server.request(
-        { method: 'tools/call', params },
-        CallToolRequestSchema
-      );
+      const toolName = typeof params?.name === 'string' ? params.name : '';
+      const toolArgs =
+        params?.arguments && typeof params.arguments === 'object' ? params.arguments as JsonRecord : {};
+      const result = await this.callTool(toolName, toolArgs);
       return { jsonrpc: '2.0', id, result };
     }
 

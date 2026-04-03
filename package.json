@@ -1,0 +1,43 @@
+{
+  "name": "musashi-mcp",
+  "version": "1.0.0",
+  "description": "Standalone MCP server for Musashi prediction market intelligence.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "musashi-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc && node dist/index.js",
+    "dev:http": "tsc && node dist/index.js --transport=http",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --transport=http",
+    "test": "pnpm build && node --test tests/**/*.test.mjs",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "prediction-markets",
+    "musashi",
+    "polymarket",
+    "kalshi"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.0",
+    "express-rate-limit": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

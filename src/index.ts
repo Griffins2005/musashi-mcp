@@ -9,6 +9,7 @@ import {
 import { StreamableHttpServer } from './server/streamable-http-server.js';
 
 const API_BASE_URL = (process.env.MUSASHI_API_BASE_URL || 'https://musashi-api.vercel.app').replace(/\/$/, '');
+const MCP_PROTOCOL_VERSION = '2025-06-18';
 
 type JsonRecord = Record<string, any>;
 
@@ -565,12 +566,14 @@ class MusashiMcpServer {
   private async handleJsonRpcRequest(request: JsonRecord): Promise<JsonRecord> {
     const { method, params, id } = request;
 
+    console.log(`[MCP] JSON-RPC request: ${String(method)}`);
+
     if (method === 'initialize') {
       return {
         jsonrpc: '2.0',
         id,
         result: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {
             tools: {},
           },

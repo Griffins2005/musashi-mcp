@@ -11,6 +11,7 @@ import { hourlyRateLimiter } from './rate-limiter.js';
 import {
   handleOAuthAuthorize,
   handleOAuthDiscovery,
+  handleOAuthProtectedResourceMetadata,
   handleOAuthToken,
 } from './oauth-handler.js';
 
@@ -121,6 +122,40 @@ export class StreamableHttpServer {
   }
 
   private setupRoutes(): void {
+    const handleMcpRoute = async (req: Request, res: Response) => {
+      try {
+        if (req.method === 'POST') {
+          await this.handlePost(req, res);
+        } else if (req.method === 'GET') {
+          const accept = req.headers['accept'] as string | undefined;
+          const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+          if (!sessionId && (!accept || !accept.includes('text/event-stream'))) {
+            res.status(200).json({
+              name: 'musashi-mcp',
+              transport: 'streamable-http',
+              protocol_version: SUPPORTED_PROTOCOL_VERSION,
+              mcp_endpoint: '/mcp',
+              oauth_authorization_server: '/.well-known/oauth-authorization-server',
+              oauth_protected_resource: '/.well-known/oauth-protected-resource',
+            });
+            return;
+          }
+
+          await this.handleGet(req, res);
+        } else if (req.method === 'DELETE') {
+          await this.handleDelete(req, res);
+        } else if (req.method === 'OPTIONS') {
+          res.status(200).end();
+        } else {
+          res.status(405).json({ error: 'Method not allowed. Use POST, GET, or DELETE.' });
+        }
+      } catch (error: any) {
+        console.error('[Streamable HTTP] Error handling request:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    };
+
     // Health check endpoint (public, no MCP protocol)
     this.app.get('/health', (_req: Request, res: Response) => {
       res.json({
@@ -136,43 +171,32 @@ export class StreamableHttpServer {
     });
 
     this.app.get('/.well-known/oauth-authorization-server', handleOAuthDiscovery);
+    this.app.get('/.well-known/oauth-protected-resource', handleOAuthProtectedResourceMetadata);
     this.app.get('/oauth/authorize', handleOAuthAuthorize);
     this.app.post('/oauth/authorize', handleOAuthAuthorize);
     this.app.post('/oauth/token', handleOAuthToken);
 
-    // Single MCP endpoint - handles POST, GET, DELETE
-    this.app.all('/mcp', async (req: Request, res: Response) => {
-      try {
-        if (req.method === 'POST') {
-          await this.handlePost(req, res);
-        } else if (req.method === 'GET') {
-          await this.handleGet(req, res);
-        } else if (req.method === 'DELETE') {
-          await this.handleDelete(req, res);
-        } else if (req.method === 'OPTIONS') {
-          // CORS preflight
-          res.status(200).end();
-        } else {
-          res.status(405).json({ error: 'Method not allowed. Use POST, GET, or DELETE.' });
-        }
-      } catch (error: any) {
-        console.error('[Streamable HTTP] Error handling request:', error);
-        res.status(500).json({ error: 'Internal server error' });
-      }
-    });
+    // Accept both the explicit MCP endpoint and the bare host URL.
+    this.app.all('/', handleMcpRoute);
+    this.app.all('/mcp', handleMcpRoute);
 
     // 404 handler
     this.app.use((_req: Request, res: Response) => {
       res.status(404).json({
         error: 'Not found',
         available_endpoints: [
+          'GET /',
           'GET /health',
+          'GET /.well-known/oauth-protected-resource',
           'GET /.well-known/oauth-authorization-server',
           'GET /oauth/authorize',
           'POST /oauth/authorize',
           'POST /oauth/token',
+          'POST / (send JSON-RPC messages)',
           'POST /mcp (send JSON-RPC messages)',
+          'GET / (open SSE stream)',
           'GET /mcp (open SSE stream)',
+          'DELETE / (terminate session)',
           'DELETE /mcp (terminate session)',
         ],
       });

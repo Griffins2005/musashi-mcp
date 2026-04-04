@@ -91,6 +91,17 @@ export function handleOAuthDiscovery(req: Request, res: Response): void {
   });
 }
 
+export function handleOAuthProtectedResourceMetadata(req: Request, res: Response): void {
+  const baseUrl = getBaseUrl(req);
+
+  res.json({
+    resource: `${baseUrl}/mcp`,
+    authorization_servers: [baseUrl],
+    bearer_methods_supported: ['header'],
+    scopes_supported: ['mcp:read', 'mcp:write'],
+  });
+}
+
 export function handleOAuthAuthorize(req: Request, res: Response): void {
   const redirectUri =
     typeof req.query.redirect_uri === 'string'

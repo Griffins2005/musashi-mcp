@@ -1,22 +1,8 @@
 # musashi-mcp
 
-`musashi-mcp` is the standalone MCP server for Musashi.
+`musashi-mcp` exposes Musashi market intelligence as MCP tools for clients such as Claude and ChatGPT.
 
-It exposes Musashi market intelligence as MCP tools, but now treats `musashi-api` as the single backend dependency instead of reading from the old monolithic repository.
-
-## What this project does
-
-`musashi-mcp` is the MCP-facing adapter layer in the split Musashi architecture:
-
-- `musashi-api`: the core backend with the real analysis and market/feed endpoints
-- `musashi-extension`: the browser extension UI for X/Twitter
-- `musashi-mcp`: the MCP server that converts Musashi API capabilities into MCP tools for AI clients
-
-`musashi-mcp` does not perform market analysis by itself. It forwards requests to `musashi-api`, then formats those responses as MCP tool results.
-
-The HTTP transport also supports OAuth discovery and authorization endpoints so remote MCP clients such as `claude.ai` can connect through an OAuth-style flow while still using Musashi API keys underneath.
-
-## Supported tools
+It connects to `musashi-api` and makes these capabilities available over MCP:
 
 - `analyze_text`
 - `get_arbitrage`
@@ -27,28 +13,82 @@ The HTTP transport also supports OAuth discovery and authorization endpoints so 
 - `get_feed_accounts`
 - `get_health`
 
-## Requirements
+## Quick start
+
+### Hosted server
+
+Production MCP endpoint:
+
+```text
+https://musashi-production.up.railway.app/mcp
+```
+
+OAuth discovery endpoint:
+
+```text
+https://musashi-production.up.railway.app/.well-known/oauth-authorization-server
+```
+
+To authorize access, the server expects a valid `mcp_sk_...` key from `MCP_API_KEYS` or `MUSASHI_MCP_API_KEY`.
+
+## Connect from Claude
+
+If your Claude account supports custom MCP connectors:
+
+1. Open Claude MCP or connector settings.
+2. Add a custom MCP server.
+3. Use this server URL:
+
+```text
+https://musashi-production.up.railway.app/mcp
+```
+
+4. Choose `OAuth` if prompted.
+5. Complete the Musashi authorization form with a valid `mcp_sk_...` key.
+
+## Connect from ChatGPT
+
+If ChatGPT Apps or Developer Mode is enabled for your account:
+
+1. Open `Settings` -> `Apps`.
+2. Create a new custom app.
+3. Set `MCP Server URL` to:
+
+```text
+https://musashi-production.up.railway.app/mcp
+```
+
+4. Leave authentication as `OAuth`.
+5. If manual OAuth asks for a client ID, a stable value such as `chatgpt-musashi` works.
+6. Complete the Musashi authorization form with a valid `mcp_sk_...` key.
+
+If the connection succeeds, ChatGPT should be able to discover and call Musashi tools from chat.
+
+## Example prompts
+
+Once the app is connected, these are good smoke tests:
+
+- `Use the Musashi app to get health status.`
+- `Use the Musashi app to get feed statistics.`
+- `Use the Musashi app to list tracked feed accounts.`
+- `Use the Musashi app to show market movers with a minimum change of 0.03.`
+- `Use the Musashi app to analyze this text: Bitcoin will be above 150k by the end of 2026.`
+
+## Local development
+
+### Requirements
 
 - Node.js `>=18`
 - `pnpm`
-- A reachable `musashi-api` instance
+- a reachable `musashi-api` instance
 
-For local development, the usual backend is:
+Install dependencies:
 
-```text
-http://127.0.0.1:3000
+```bash
+pnpm install
 ```
 
-## Configuration
-
-- `MUSASHI_API_BASE_URL`: base URL for the new `musashi-api` deployment
-- `PORT`: HTTP transport port when running with `--transport=http`
-- `MUSASHI_MCP_API_KEY`: optional API key used by the included HTTP transport auth helpers
-- `MCP_API_KEYS`: optional comma-separated list of valid API keys for HTTP transport auth helpers
-
-At least one valid key in `MUSASHI_MCP_API_KEY` or `MCP_API_KEYS` is recommended if you want to use the OAuth authorization form.
-
-## Scripts
+### Available scripts
 
 - `pnpm build`: compile the server to `dist/`
 - `pnpm dev`: run stdio transport locally
@@ -59,36 +99,36 @@ At least one valid key in `MUSASHI_MCP_API_KEY` or `MCP_API_KEYS` is recommended
 - `pnpm watch`: run TypeScript in watch mode
 - `pnpm clean`: remove `dist/`
 
-## Install
+### Environment variables
+
+- `MUSASHI_API_BASE_URL`: Musashi API base URL
+- `PORT`: HTTP port when running with `--transport=http`
+- `MUSASHI_MCP_API_KEY`: optional single valid MCP API key
+- `MCP_API_KEYS`: optional comma-separated list of valid MCP API keys
+
+Example local values:
 
 ```bash
-cd ./musashi-mcp
-pnpm install
+MUSASHI_API_BASE_URL=http://127.0.0.1:3000
+PORT=3030
+MUSASHI_MCP_API_KEY=mcp_sk_your_key_here
 ```
 
-## How to use
-
-### Option 1: stdio transport
-
-This is the usual mode for MCP desktop clients and local agent integrations.
+### Run over stdio
 
 ```bash
-cd ./musashi-mcp
 MUSASHI_API_BASE_URL=http://127.0.0.1:3000 pnpm dev
 ```
 
-Use this when an MCP client expects to spawn the server process directly over stdio.
+Use this when your MCP client launches the server process directly.
 
-### Option 2: streamable HTTP transport
-
-This is useful when you want to connect over HTTP instead of stdio.
+### Run over HTTP
 
 ```bash
-cd ./musashi-mcp
 MUSASHI_API_BASE_URL=http://127.0.0.1:3000 PORT=3030 pnpm dev:http
 ```
 
-Once running, the main endpoints are:
+Useful local endpoints:
 
 - `GET /health`
 - `GET /.well-known/oauth-authorization-server`
@@ -99,196 +139,40 @@ Once running, the main endpoints are:
 - `GET /mcp`
 - `DELETE /mcp`
 
-If you run the HTTP transport locally with `PORT=3030`, the health endpoint will be:
+## Basic checks
 
-```text
-http://127.0.0.1:3030/health
-```
-
-OAuth discovery will be available at:
-
-```text
-http://127.0.0.1:3030/.well-known/oauth-authorization-server
-```
-
-## Local development flow
-
-### 1. Start `musashi-api`
-
-In one terminal:
+Build:
 
 ```bash
-cd ./musashi-api
-pnpm dev
+pnpm build
 ```
 
-### 2. Start `musashi-mcp`
-
-In another terminal, choose either stdio or HTTP:
+Smoke tests:
 
 ```bash
-cd ./musashi-mcp
-MUSASHI_API_BASE_URL=http://127.0.0.1:3000 pnpm dev
-```
-
-or
-
-```bash
-cd ./musashi-mcp
-MUSASHI_API_BASE_URL=http://127.0.0.1:3000 PORT=3030 pnpm dev:http
-```
-
-## Example environment values
-
-### Local
-
-```bash
-MUSASHI_API_BASE_URL=http://127.0.0.1:3000
-PORT=3030
-```
-
-### Hosted API
-
-```bash
-MUSASHI_API_BASE_URL=https://musashi-api.vercel.app
-PORT=3030
-```
-
-### MCP auth
-
-```bash
-MUSASHI_MCP_API_KEY=mcp_sk_your_key_here
-```
-
-## Testing
-
-### Automated checks currently available
-
-This repo now includes a lightweight `pnpm test` script, but it is still a smoke-oriented suite rather than a full MCP protocol conformance suite.
-
-The checks that exist today are:
-
-- `pnpm build`
-  Confirms the server compiles successfully to `dist/`
-- `pnpm test`
-  Builds the project, validates API key helper behavior, and verifies that the streamable HTTP transport serves `/health` plus OAuth discovery metadata
-
-Recommended baseline verification:
-
-```bash
-cd ./musashi-mcp
 pnpm test
 ```
 
-### Manual local verification
-
-#### Verify the upstream API first
-
-Before testing `musashi-mcp`, confirm the backend works:
-
-```bash
-curl http://127.0.0.1:3000/api/health
-```
-
-You should get a healthy JSON response from `musashi-api`.
-
-#### Verify the HTTP transport health endpoint
-
-If you are using `pnpm dev:http`:
+Manual health check:
 
 ```bash
 curl http://127.0.0.1:3030/health
 ```
 
-You should get JSON containing fields such as:
-
-- `status`
-- `transport`
-- `protocol_version`
-- `active_sessions`
-
-#### Verify OAuth discovery
-
-If you are using `pnpm dev:http`:
+Manual OAuth discovery check:
 
 ```bash
 curl http://127.0.0.1:3030/.well-known/oauth-authorization-server
 ```
 
-You should get JSON containing:
-
-- `issuer`
-- `authorization_endpoint`
-- `token_endpoint`
-- `response_types_supported`
-- `grant_types_supported`
-
-#### Verify the authorization form
-
-Open this URL in a browser:
+Manual authorization form check:
 
 ```text
 http://127.0.0.1:3030/oauth/authorize?redirect_uri=http://127.0.0.1/callback&state=test-state
 ```
 
-You should see a simple Musashi authorization form that accepts a valid MCP API key.
+## Notes
 
-#### Verify MCP tool exposure
-
-Start the stdio server:
-
-```bash
-cd ./musashi-mcp
-MUSASHI_API_BASE_URL=http://127.0.0.1:3000 pnpm dev
-```
-
-Then connect it from your MCP client and confirm these tools are visible:
-
-- `analyze_text`
-- `get_arbitrage`
-- `get_movers`
-- `ground_probability`
-- `get_feed`
-- `get_feed_stats`
-- `get_feed_accounts`
-- `get_health`
-
-#### Verify end-to-end behavior through an MCP client
-
-Good smoke checks:
-
-1. Call `get_health`
-2. Call `analyze_text` with a short market-related sentence
-3. Call `get_feed` with a small `limit`
-
-Example `analyze_text` input:
-
-```json
-{
-  "text": "Bitcoin could reach 100k this year",
-  "minConfidence": 0.25,
-  "maxResults": 5
-}
-```
-
-Expected result shape:
-
-- text output describing matching markets
-- platform information
-- confidence values
-- market URLs when available
-
-## Notes on security
-
-For the HTTP transport:
-
-- CORS is restricted to an allowlist in [streamable-http-server.ts](../musashi-mcp/src/server/streamable-http-server.ts)
-- rate limiting is enabled
-- optional API key helpers are available through `MUSASHI_MCP_API_KEY` or `MCP_API_KEYS`
-- OAuth authorization codes are stored in memory and expire automatically
-
-## Current limitations
-
-- `pnpm test` is currently a smoke suite, not a full MCP client interoperability suite
-- MCP behavior depends on the availability and correctness of `musashi-api`
-- the HTTP transport is mainly intended for controlled local/dev integrations unless you add stronger deployment hardening
+- OAuth authorization codes are stored in memory and expire automatically.
+- `pnpm test` is a smoke suite, not a full MCP interoperability suite.
+- Behavior depends on a healthy and reachable `musashi-api`.

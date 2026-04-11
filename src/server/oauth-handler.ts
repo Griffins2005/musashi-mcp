@@ -6,6 +6,7 @@ interface AuthorizationCodeRecord {
   apiKey: string;
   expiresAt: number;
   codeChallenge?: string;
+  codeChallengeMethod?: 'S256' | 'plain';
 }
 
 const authCodes = new Map<string, AuthorizationCodeRecord>();
@@ -13,11 +14,8 @@ const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
 
 setInterval(() => {
   const now = Date.now();
-
   for (const [code, record] of authCodes.entries()) {
-    if (record.expiresAt < now) {
-      authCodes.delete(code);
-    }
+    if (record.expiresAt < now) authCodes.delete(code);
   }
 }, 60_000);
 
@@ -38,6 +36,7 @@ function renderAuthorizeForm(options: {
   redirectUri: string;
   state: string;
   codeChallenge?: string;
+  codeChallengeMethod?: string;
   error?: string;
 }): string {
   const errorBlock = options.error
@@ -71,6 +70,7 @@ function renderAuthorizeForm(options: {
     <input type="hidden" name="redirect_uri" value="${escapeHtml(options.redirectUri)}" />
     <input type="hidden" name="state" value="${escapeHtml(options.state)}" />
     <input type="hidden" name="code_challenge" value="${escapeHtml(options.codeChallenge || '')}" />
+    <input type="hidden" name="code_challenge_method" value="${escapeHtml(options.codeChallengeMethod || 'S256')}" />
     <button type="submit">Authorize Access</button>
   </form>
 </body>
@@ -79,7 +79,6 @@ function renderAuthorizeForm(options: {
 
 export function handleOAuthDiscovery(req: Request, res: Response): void {
   const baseUrl = getBaseUrl(req);
-
   res.json({
     issuer: baseUrl,
     authorization_endpoint: `${baseUrl}/oauth/authorize`,
@@ -93,7 +92,6 @@ export function handleOAuthDiscovery(req: Request, res: Response): void {
 
 export function handleOAuthProtectedResourceMetadata(req: Request, res: Response): void {
   const baseUrl = getBaseUrl(req);
-
   res.json({
     resource: `${baseUrl}/mcp`,
     authorization_servers: [baseUrl],
@@ -122,6 +120,15 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
         ? req.body.code_challenge
         : '';
 
+  const rawMethod =
+    typeof req.query.code_challenge_method === 'string'
+      ? req.query.code_challenge_method
+      : typeof req.body?.code_challenge_method === 'string'
+        ? req.body.code_challenge_method
+        : 'S256';
+
+  const codeChallengeMethod: 'S256' | 'plain' = rawMethod === 'plain' ? 'plain' : 'S256';
+
   if (!redirectUri || !state) {
     res.status(400).json({
       error: 'invalid_request',
@@ -139,6 +146,7 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
           redirectUri,
           state,
           codeChallenge,
+          codeChallengeMethod,
           error: 'Invalid API key. Please try again.',
         })
       );
@@ -150,6 +158,7 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
       apiKey,
       expiresAt: Date.now() + AUTH_CODE_TTL_MS,
       codeChallenge: codeChallenge || undefined,
+      codeChallengeMethod: codeChallenge ? codeChallengeMethod : undefined,
     });
 
     const redirectUrl = new URL(redirectUri);
@@ -165,13 +174,14 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
       redirectUri,
       state,
       codeChallenge,
+      codeChallengeMethod,
     })
   );
 }
 
 export function handleOAuthToken(req: Request, res: Response): void {
-  const grantType = typeof req.body?.grant_type === 'string' ? req.body.grant_type : '';
-  const code = typeof req.body?.code === 'string' ? req.body.code : '';
+  const grantType    = typeof req.body?.grant_type    === 'string' ? req.body.grant_type    : '';
+  const code         = typeof req.body?.code          === 'string' ? req.body.code          : '';
   const codeVerifier = typeof req.body?.code_verifier === 'string' ? req.body.code_verifier : '';
 
   if (grantType !== 'authorization_code') {
@@ -208,9 +218,26 @@ export function handleOAuthToken(req: Request, res: Response): void {
     return;
   }
 
-  if (authData.codeChallenge && codeVerifier) {
-    const challenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-    if (challenge !== authData.codeChallenge) {
+  if (authData.codeChallenge) {
+    if (!codeVerifier) {
+      res.status(400).json({
+        error: 'invalid_grant',
+        error_description: 'code_verifier is required when code_challenge was used',
+      });
+      return;
+    }
+
+    let computedChallenge: string;
+    if (authData.codeChallengeMethod === 'plain') {
+      computedChallenge = codeVerifier;
+    } else {
+      computedChallenge = crypto
+        .createHash('sha256')
+        .update(codeVerifier)
+        .digest('base64url');
+    }
+
+    if (computedChallenge !== authData.codeChallenge) {
       res.status(400).json({
         error: 'invalid_grant',
         error_description: 'Code verifier does not match challenge',

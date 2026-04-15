@@ -11,7 +11,16 @@ It connects to `musashi-api` and makes these capabilities available over MCP:
 - `get_feed`
 - `get_feed_stats`
 - `get_feed_accounts`
+- `get_wallet_activity`
+- `get_wallet_positions`
+- `get_market_wallet_flow`
+- `get_smart_money_markets`
 - `get_health`
+
+Wallet tool status:
+
+- `get_wallet_activity` and `get_wallet_positions` are backed by implemented `musashi-api` endpoints.
+- `get_market_wallet_flow` and `get_smart_money_markets` are registered MCP proxy tools, but need the planned `musashi-api` endpoints before they are end-to-end callable.
 
 ## Quick start
 
@@ -73,6 +82,10 @@ Once the app is connected, these are good smoke tests:
 - `Use the Musashi app to list tracked feed accounts.`
 - `Use the Musashi app to show market movers with a minimum change of 0.03.`
 - `Use the Musashi app to analyze this text: Bitcoin will be above 150k by the end of 2026.`
+- `Use the Musashi app to show wallet activity for 0x...`
+- `Use the Musashi app to show open positions for 0x...`
+- `Use the Musashi app to explain wallet flow for this market: ...`
+- `Use the Musashi app to find smart money markets in crypto.`
 
 ## Local development
 
@@ -113,6 +126,8 @@ MUSASHI_API_BASE_URL=http://127.0.0.1:3000
 PORT=3030
 MUSASHI_MCP_API_KEY=mcp_sk_your_key_here
 ```
+
+For local wallet tools, `MUSASHI_API_BASE_URL` must point at a `musashi-api` server that has `/api/wallet/activity` and `/api/wallet/positions` available.
 
 ### Run over stdio
 

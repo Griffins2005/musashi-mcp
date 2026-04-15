@@ -15,12 +15,14 @@ It connects to `musashi-api` and makes these capabilities available over MCP:
 - `get_wallet_positions`
 - `get_market_wallet_flow`
 - `get_smart_money_markets`
+- `get_market_brief`
+- `explain_market_move`
 - `get_health`
 
-Wallet tool status:
+Wallet and market context tool status:
 
-- `get_wallet_activity` and `get_wallet_positions` are backed by implemented `musashi-api` endpoints.
-- `get_market_wallet_flow` and `get_smart_money_markets` are registered MCP proxy tools, but need the planned `musashi-api` endpoints before they are end-to-end callable.
+- `get_wallet_activity`, `get_wallet_positions`, `get_market_wallet_flow`, and `get_smart_money_markets` are backed by `musashi-api` endpoints.
+- `get_market_brief` and `explain_market_move` compose existing `musashi-api` primitives without direct market-source calls.
 
 ## Quick start
 
@@ -86,6 +88,8 @@ Once the app is connected, these are good smoke tests:
 - `Use the Musashi app to show open positions for 0x...`
 - `Use the Musashi app to explain wallet flow for this market: ...`
 - `Use the Musashi app to find smart money markets in crypto.`
+- `Use the Musashi app to get a market brief for BTC 100k.`
+- `Use the Musashi app to explain why this market moved: BTC 100k.`
 
 ## Local development
 

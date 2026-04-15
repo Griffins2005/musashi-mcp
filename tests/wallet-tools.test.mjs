@@ -39,8 +39,131 @@ async function stopChild(child) {
 function createMockApiServer() {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    const btcMarket = {
+      id: 'polymarket-abc',
+      platform: 'polymarket',
+      title: 'Will BTC hit 100k?',
+      description: 'Bitcoin price milestone market.',
+      yesPrice: 0.64,
+      noPrice: 0.36,
+      volume24h: 123456,
+      category: 'crypto',
+      url: 'https://polymarket.com/event/btc-100k',
+      lastUpdated: '2026-04-11T00:00:00.000Z',
+      oneDayPriceChange: 0.06,
+    };
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+    if (url.pathname === '/api/analyze-text') {
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          markets: [
+            {
+              market: btcMarket,
+              confidence: 0.94,
+              matchedKeywords: ['BTC', '100k'],
+            },
+          ],
+          suggested_action: {
+            direction: 'YES',
+            confidence: 0.72,
+            edge: 0.04,
+            reasoning: 'Mock signal.',
+          },
+          metadata: {
+            processing_time_ms: 4,
+          },
+        },
+      }));
+      return;
+    }
+
+    if (url.pathname === '/api/markets/movers') {
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          movers: [
+            {
+              market: btcMarket,
+              priceChange1h: 0.06,
+              previousPrice: 0.58,
+              currentPrice: 0.64,
+              direction: 'up',
+              timestamp: 1775851200000,
+            },
+          ],
+          count: 1,
+          timestamp: '2026-04-11T00:00:01.000Z',
+          filters: {
+            category: url.searchParams.get('category'),
+          },
+        },
+      }));
+      return;
+    }
+
+    if (url.pathname === '/api/markets/arbitrage') {
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          opportunities: [
+            {
+              polymarket: btcMarket,
+              kalshi: {
+                ...btcMarket,
+                id: 'kalshi-btc-100k',
+                platform: 'kalshi',
+                yesPrice: 0.68,
+                noPrice: 0.32,
+              },
+              spread: 0.04,
+              profitPotential: 0.03,
+              direction: 'buy_poly_sell_kalshi',
+              confidence: 0.81,
+              matchReason: 'Same BTC threshold.',
+            },
+          ],
+          count: 1,
+          timestamp: '2026-04-11T00:00:01.000Z',
+        },
+      }));
+      return;
+    }
+
+    if (url.pathname === '/api/feed') {
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          tweets: [
+            {
+              tweet: {
+                id: 'tweet-1',
+                author: 'crypto_news',
+                text: 'BTC odds jumped after ETF inflows; traders are watching the 100k market.',
+                created_at: '2026-04-11T00:00:00.000Z',
+                url: 'https://x.com/crypto_news/status/1',
+              },
+              confidence: 0.9,
+              urgency: 'high',
+              matches: [
+                {
+                  market: btcMarket,
+                  confidence: 0.93,
+                  matchedKeywords: ['BTC', '100k'],
+                },
+              ],
+              analyzed_at: '2026-04-11T00:00:01.000Z',
+              collected_at: '2026-04-11T00:00:01.000Z',
+            },
+          ],
+          count: 1,
+          timestamp: '2026-04-11T00:00:01.000Z',
+        },
+      }));
+      return;
+    }
 
     if (url.pathname === '/api/wallet/activity') {
       res.end(JSON.stringify({
@@ -114,6 +237,104 @@ function createMockApiServer() {
           cached: true,
           cached_at: '2026-04-11T00:00:00.000Z',
           cache_age_seconds: 1,
+        },
+      }));
+      return;
+    }
+
+    if (url.pathname === '/api/markets/wallet-flow') {
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          flow: {
+            marketId: url.searchParams.get('marketId') || 'polymarket-abc',
+            conditionId: 'abc',
+            marketTitle: 'Will BTC hit 100k?',
+            window: url.searchParams.get('window') || '24h',
+            walletCount: 3,
+            smartWalletCount: 1,
+            buyVolume: 1200,
+            sellVolume: 450,
+            netVolume: 750,
+            netDirection: 'YES',
+            largeTrades: [
+              {
+                wallet: '0x0000000000000000000000000000000000000000',
+                activityType: 'trade',
+                platform: 'polymarket',
+                marketTitle: 'Will BTC hit 100k?',
+                outcome: 'YES',
+                side: 'buy',
+                price: 0.64,
+                size: 2000,
+                value: 1280,
+                timestamp: '2026-04-11T00:00:00.000Z',
+                url: 'https://polymarket.com/event/btc-100k',
+              },
+            ],
+          },
+          activity: [],
+          count: 0,
+          market: btcMarket,
+          flow_agrees_with_price_move: true,
+        },
+        filters: {
+          marketId: url.searchParams.get('marketId'),
+          window: url.searchParams.get('window') || '24h',
+          limit: Number(url.searchParams.get('limit') || 50),
+        },
+        timestamp: '2026-04-11T00:00:01.000Z',
+        metadata: {
+          source: 'polymarket',
+          processing_time_ms: 7,
+          cached: false,
+          cache_age_seconds: null,
+        },
+      }));
+      return;
+    }
+
+    if (url.pathname === '/api/markets/smart-money') {
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          markets: [
+            {
+              marketId: 'polymarket-abc',
+              conditionId: 'abc',
+              marketTitle: 'Will BTC hit 100k?',
+              category: url.searchParams.get('category') || 'crypto',
+              url: 'https://polymarket.com/event/btc-100k',
+              score: 1887.5,
+              flow: {
+                marketId: 'polymarket-abc',
+                conditionId: 'abc',
+                marketTitle: 'Will BTC hit 100k?',
+                window: url.searchParams.get('window') || '24h',
+                walletCount: 3,
+                smartWalletCount: 1,
+                buyVolume: 1200,
+                sellVolume: 450,
+                netVolume: 750,
+                netDirection: 'YES',
+                largeTrades: [],
+              },
+            },
+          ],
+          count: 1,
+        },
+        filters: {
+          category: url.searchParams.get('category'),
+          window: url.searchParams.get('window') || '24h',
+          minVolume: Number(url.searchParams.get('minVolume') || 0),
+          limit: Number(url.searchParams.get('limit') || 20),
+        },
+        timestamp: '2026-04-11T00:00:01.000Z',
+        metadata: {
+          source: 'polymarket',
+          processing_time_ms: 8,
+          cached: false,
+          cache_age_seconds: null,
         },
       }));
       return;
@@ -236,6 +457,8 @@ test('wallet tools are listed', async (t) => {
   assert.ok(names.includes('get_wallet_positions'));
   assert.ok(names.includes('get_market_wallet_flow'));
   assert.ok(names.includes('get_smart_money_markets'));
+  assert.ok(names.includes('get_market_brief'));
+  assert.ok(names.includes('explain_market_move'));
 });
 
 test('wallet activity and positions tools format API data', async (t) => {
@@ -271,4 +494,59 @@ test('wallet activity and positions tools format API data', async (t) => {
   assert.match(positionsText, /Wallet positions/);
   assert.match(positionsText, /Will ETH hit 10k/);
   assert.match(positionsText, /Unrealized PnL: \$-1/);
+
+  const flow = await callMcp(baseUrl, sessionId, 'tools/call', {
+    name: 'get_market_wallet_flow',
+    arguments: { marketId: 'polymarket-abc', window: '24h', limit: 10 },
+  });
+  const flowText = textFromToolResult(flow);
+  assert.match(flowText, /Wallet flow/);
+  assert.match(flowText, /Net direction: YES/);
+  assert.match(flowText, /Smart wallets: 1/);
+
+  const smartMoney = await callMcp(baseUrl, sessionId, 'tools/call', {
+    name: 'get_smart_money_markets',
+    arguments: { category: 'crypto', window: '24h', limit: 5 },
+  });
+  const smartMoneyText = textFromToolResult(smartMoney);
+  assert.match(smartMoneyText, /Smart-money markets/);
+  assert.match(smartMoneyText, /Will BTC hit 100k/);
+  assert.match(smartMoneyText, /Net direction: YES/);
+});
+
+test('market context tools compose primitive API data', async (t) => {
+  const mockApi = createMockApiServer();
+  const apiBaseUrl = await listen(mockApi);
+  const port = randomTestPort();
+  const child = spawnMcpServer(port, apiBaseUrl);
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  t.after(async () => {
+    await stopChild(child);
+    await closeServer(mockApi);
+  });
+
+  await waitForServer(`${baseUrl}/health`);
+  const sessionId = await initializeMcp(baseUrl);
+
+  const brief = await callMcp(baseUrl, sessionId, 'tools/call', {
+    name: 'get_market_brief',
+    arguments: { marketId: 'polymarket-abc', window: '24h' },
+  });
+  const briefText = textFromToolResult(brief);
+  assert.match(briefText, /Market brief/);
+  assert.match(briefText, /Will BTC hit 100k/);
+  assert.match(briefText, /Wallet flow/);
+  assert.match(briefText, /Feed mentions/);
+  assert.match(briefText, /Arbitrage context/);
+
+  const explanation = await callMcp(baseUrl, sessionId, 'tools/call', {
+    name: 'explain_market_move',
+    arguments: { marketId: 'polymarket-abc', window: '24h', minChange: 0.01 },
+  });
+  const explanationText = textFromToolResult(explanation);
+  assert.match(explanationText, /Market move explanation/);
+  assert.match(explanationText, /Move: up/);
+  assert.match(explanationText, /Wallet flow leans YES/);
+  assert.match(explanationText, /Bottom line/);
 });

@@ -213,6 +213,14 @@ get_market_wallet_flow
 get_smart_money_markets
 ```
 
+Current implementation note:
+
+- `get_wallet_activity` and `get_wallet_positions` can proxy to implemented `musashi-api` endpoints.
+- `get_market_wallet_flow` and `get_smart_money_markets` are wired in MCP as API proxy tools, but they are not end-to-end ready until the matching `musashi-api` endpoints are implemented:
+  - `GET /api/markets/wallet-flow`
+  - `GET /api/markets/smart-money`
+- Until those API routes exist, these two MCP tools should be treated as registered placeholders that will surface API errors if called.
+
 Later:
 
 ```text
@@ -559,10 +567,12 @@ Use the Musashi app to find smart money markets in crypto.
 6. Add local server route mappings.
 7. Add SDK methods to `MusashiAgent`.
 8. Add MCP tools in `musashi-mcp/src/index.ts`.
+   - `get_wallet_activity` and `get_wallet_positions` become callable once their REST endpoints exist.
+   - `get_market_wallet_flow` and `get_smart_money_markets` may be registered now, but remain pending until steps 11 and 12 add their REST endpoints.
 9. Update `musashi-mcp/README.md`.
 10. Add tests and smoke prompts.
-11. Add market wallet flow aggregation.
-12. Add smart money markets ranking.
+11. Add market wallet flow aggregation and `GET /api/markets/wallet-flow`.
+12. Add smart money markets ranking and `GET /api/markets/smart-money`.
 13. Add market brief and explain-market-move tools after the primitives are stable.
 
 ## Acceptance Criteria

@@ -38,6 +38,24 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
+function formatNumber(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 'n/a';
+  }
+
+  return value.toLocaleString();
+}
+
+function formatWalletMetadata(metadata: JsonRecord | null | undefined): string {
+  if (!metadata) {
+    return '';
+  }
+
+  const cacheAge = metadata.cache_age_seconds ?? 'n/a';
+  const processing = metadata.processing_time_ms ?? 'n/a';
+  return `Source: ${metadata.source || 'polymarket'} | Cached: ${metadata.cached ? 'yes' : 'no'} | Cache age: ${cacheAge}s | Processing: ${processing}ms`;
+}
+
 function buildTextResult(lines: string[], isError = false): JsonRecord {
   return {
     content: [
@@ -188,6 +206,60 @@ class MusashiMcpServer {
           },
         },
         {
+          name: 'get_wallet_activity',
+          description: 'Fetch recent public Polymarket activity for a wallet.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              wallet: { type: 'string', description: 'Public Polymarket wallet address.' },
+              limit: { type: 'number', minimum: 1, maximum: 100, description: 'Max activity rows.' },
+              since: { type: 'string', description: 'Optional ISO lower-bound timestamp.' },
+            },
+            required: ['wallet'],
+          },
+        },
+        {
+          name: 'get_wallet_positions',
+          description: 'Fetch current public Polymarket positions for a wallet.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              wallet: { type: 'string', description: 'Public Polymarket wallet address.' },
+              minValue: { type: 'number', minimum: 0, description: 'Minimum current value.' },
+              limit: { type: 'number', minimum: 1, maximum: 100, description: 'Max position rows.' },
+            },
+            required: ['wallet'],
+          },
+        },
+        {
+          name: 'get_market_wallet_flow',
+          description: 'Explain recent public wallet flow for a market.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              marketId: { type: 'string', description: 'Musashi or Polymarket market id.' },
+              conditionId: { type: 'string', description: 'Polymarket condition id.' },
+              tokenId: { type: 'string', description: 'Polymarket token id.' },
+              query: { type: 'string', description: 'Market search text.' },
+              window: { type: 'string', enum: ['1h', '24h', '7d'], description: 'Flow time window.' },
+              limit: { type: 'number', minimum: 1, maximum: 100, description: 'Max activity rows.' },
+            },
+          },
+        },
+        {
+          name: 'get_smart_money_markets',
+          description: 'Find markets with unusual smart-wallet activity.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              category: { type: 'string', description: 'Optional Musashi category.' },
+              window: { type: 'string', enum: ['1h', '24h', '7d'], description: 'Ranking time window.' },
+              minVolume: { type: 'number', minimum: 0, description: 'Minimum flow volume.' },
+              limit: { type: 'number', minimum: 1, maximum: 100, description: 'Max markets.' },
+            },
+          },
+        },
+        {
           name: 'get_health',
           description: 'Check API health and upstream market-source status.',
           inputSchema: {
@@ -216,6 +288,14 @@ class MusashiMcpServer {
           return await this.handleGetFeedStats();
         case 'get_feed_accounts':
           return await this.handleGetFeedAccounts();
+        case 'get_wallet_activity':
+          return await this.handleGetWalletActivity(args);
+        case 'get_wallet_positions':
+          return await this.handleGetWalletPositions(args);
+        case 'get_market_wallet_flow':
+          return await this.handleGetMarketWalletFlow(args);
+        case 'get_smart_money_markets':
+          return await this.handleGetSmartMoneyMarkets(args);
         case 'get_health':
           return await this.handleGetHealth();
         default:
@@ -507,6 +587,168 @@ class MusashiMcpServer {
       }
       lines.push('');
     });
+
+    return buildTextResult(lines);
+  }
+
+  /**
+   * Fetch and format wallet activity.
+   *
+   * @param args Tool input with wallet and optional filters.
+   */
+  private async handleGetWalletActivity(args: JsonRecord): Promise<JsonRecord> {
+    const wallet = typeof args.wallet === 'string' ? args.wallet : '';
+    const params = new URLSearchParams({ wallet });
+
+    if (args.limit !== undefined) params.set('limit', String(args.limit));
+    if (args.since) params.set('since', String(args.since));
+
+    const payload = await fetchJson(`/api/wallet/activity?${params.toString()}`);
+    const activity = payload.data?.activity ?? [];
+
+    if (!Array.isArray(activity) || activity.length === 0) {
+      return buildTextResult([
+        `No wallet activity found for ${wallet || 'the requested wallet'}.`,
+        formatWalletMetadata(payload.metadata),
+      ]);
+    }
+
+    const lines = [`Wallet activity for ${payload.metadata?.wallet || wallet}:`, ''];
+
+    activity.forEach((item: JsonRecord, index: number) => {
+      lines.push(`${index + 1}. ${item.marketTitle || 'Untitled market'}`);
+      lines.push(`Activity: ${item.activityType || 'unknown'} | Side: ${item.side || 'n/a'} | Outcome: ${item.outcome || 'n/a'}`);
+      lines.push(`Price: ${formatPercent(item.price)} | Size: ${formatNumber(item.size)} | Value: ${formatVolume(item.value)}`);
+      lines.push(`Time: ${formatDate(item.timestamp)}`);
+      if (item.url) lines.push(`URL: ${item.url}`);
+      lines.push('');
+    });
+
+    const metadataLine = formatWalletMetadata(payload.metadata);
+    if (metadataLine) lines.push(metadataLine);
+
+    return buildTextResult(lines);
+  }
+
+  /**
+   * Fetch and format wallet positions.
+   *
+   * @param args Tool input with wallet and optional filters.
+   */
+  private async handleGetWalletPositions(args: JsonRecord): Promise<JsonRecord> {
+    const wallet = typeof args.wallet === 'string' ? args.wallet : '';
+    const params = new URLSearchParams({ wallet });
+
+    if (args.minValue !== undefined) params.set('minValue', String(args.minValue));
+    if (args.limit !== undefined) params.set('limit', String(args.limit));
+
+    const payload = await fetchJson(`/api/wallet/positions?${params.toString()}`);
+    const positions = payload.data?.positions ?? [];
+
+    if (!Array.isArray(positions) || positions.length === 0) {
+      return buildTextResult([
+        `No open wallet positions found for ${wallet || 'the requested wallet'}.`,
+        formatWalletMetadata(payload.metadata),
+      ]);
+    }
+
+    const lines = [`Wallet positions for ${payload.metadata?.wallet || wallet}:`, ''];
+
+    positions.forEach((position: JsonRecord, index: number) => {
+      lines.push(`${index + 1}. ${position.marketTitle || 'Untitled market'}`);
+      lines.push(`Outcome: ${position.outcome || 'n/a'} | Quantity: ${formatNumber(position.quantity)}`);
+      lines.push(`Average: ${formatPercent(position.averagePrice)} | Current: ${formatPercent(position.currentPrice)}`);
+      lines.push(`Value: ${formatVolume(position.currentValue)} | Realized PnL: ${formatVolume(position.realizedPnl)} | Unrealized PnL: ${formatVolume(position.unrealizedPnl)}`);
+      lines.push(`Updated: ${formatDate(position.updatedAt)}`);
+      if (position.url) lines.push(`URL: ${position.url}`);
+      lines.push('');
+    });
+
+    const metadataLine = formatWalletMetadata(payload.metadata);
+    if (metadataLine) lines.push(metadataLine);
+
+    return buildTextResult(lines);
+  }
+
+  /**
+   * Fetch and format market wallet flow.
+   *
+   * @param args Tool input with market identity and window.
+   */
+  private async handleGetMarketWalletFlow(args: JsonRecord): Promise<JsonRecord> {
+    const params = new URLSearchParams();
+
+    if (args.marketId) params.set('marketId', String(args.marketId));
+    if (args.conditionId) params.set('conditionId', String(args.conditionId));
+    if (args.tokenId) params.set('tokenId', String(args.tokenId));
+    if (args.query) params.set('query', String(args.query));
+    if (args.window) params.set('window', String(args.window));
+    if (args.limit !== undefined) params.set('limit', String(args.limit));
+
+    const payload = await fetchJson(`/api/markets/wallet-flow?${params.toString()}`);
+    const flow = payload.data?.flow ?? payload.data ?? {};
+    const largeTrades = Array.isArray(flow.largeTrades) ? flow.largeTrades : [];
+
+    const lines = [`Wallet flow for ${flow.marketTitle || flow.marketId || 'market'}:`, ''];
+    lines.push(`Window: ${flow.window || args.window || '24h'}`);
+    lines.push(`Net direction: ${flow.netDirection || 'unknown'} | Net volume: ${formatVolume(flow.netVolume)}`);
+    lines.push(`Buy volume: ${formatVolume(flow.buyVolume)} | Sell volume: ${formatVolume(flow.sellVolume)}`);
+    lines.push(`Wallets: ${formatNumber(flow.walletCount)} | Smart wallets: ${formatNumber(flow.smartWalletCount)}`);
+
+    if (largeTrades.length > 0) {
+      lines.push('');
+      lines.push('Large trades:');
+      largeTrades.slice(0, 5).forEach((trade: JsonRecord, index: number) => {
+        lines.push(`${index + 1}. ${trade.marketTitle || flow.marketTitle || 'Untitled market'}`);
+        lines.push(`Side: ${trade.side || 'n/a'} | Outcome: ${trade.outcome || 'n/a'} | Value: ${formatVolume(trade.value)}`);
+        lines.push(`Price: ${formatPercent(trade.price)} | Time: ${formatDate(trade.timestamp)}`);
+        if (trade.url) lines.push(`URL: ${trade.url}`);
+      });
+    }
+
+    const metadataLine = formatWalletMetadata(payload.metadata);
+    if (metadataLine) {
+      lines.push('');
+      lines.push(metadataLine);
+    }
+
+    return buildTextResult(lines);
+  }
+
+  /**
+   * Fetch and format smart-money market rankings.
+   *
+   * @param args Tool input with ranking filters.
+   */
+  private async handleGetSmartMoneyMarkets(args: JsonRecord): Promise<JsonRecord> {
+    const params = new URLSearchParams();
+
+    if (args.category) params.set('category', String(args.category));
+    if (args.window) params.set('window', String(args.window));
+    if (args.minVolume !== undefined) params.set('minVolume', String(args.minVolume));
+    if (args.limit !== undefined) params.set('limit', String(args.limit));
+
+    const payload = await fetchJson(`/api/markets/smart-money?${params.toString()}`);
+    const markets = payload.data?.markets ?? [];
+
+    if (!Array.isArray(markets) || markets.length === 0) {
+      return buildTextResult(['No smart-money markets found for the requested filters.']);
+    }
+
+    const lines = [`Smart-money markets (${markets.length}):`, ''];
+
+    markets.forEach((market: JsonRecord, index: number) => {
+      const flow = market.flow ?? {};
+      lines.push(`${index + 1}. ${market.marketTitle || flow.marketTitle || 'Untitled market'}`);
+      lines.push(`Score: ${formatNumber(market.score)} | Category: ${market.category || 'n/a'}`);
+      lines.push(`Net direction: ${flow.netDirection || 'unknown'} | Net volume: ${formatVolume(flow.netVolume)}`);
+      lines.push(`Wallets: ${formatNumber(flow.walletCount)} | Smart wallets: ${formatNumber(flow.smartWalletCount)}`);
+      if (market.url) lines.push(`URL: ${market.url}`);
+      lines.push('');
+    });
+
+    const metadataLine = formatWalletMetadata(payload.metadata);
+    if (metadataLine) lines.push(metadataLine);
 
     return buildTextResult(lines);
   }

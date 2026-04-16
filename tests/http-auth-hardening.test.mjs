@@ -15,12 +15,10 @@ async function waitForHealth(url, attempts = 40) {
       if (response.ok) {
         return response;
       }
-
       lastError = new Error(`Health check returned HTTP ${response.status}`);
     } catch (error) {
       lastError = error;
     }
-
     await wait(250);
   }
 
@@ -48,15 +46,56 @@ async function stopChildProcess(child) {
   await exited.catch(() => undefined);
 }
 
-test('MCP surface exposes prompts and empty resources', async (t) => {
-  const port = 4800 + Math.floor(Math.random() * 300);
+test('Streamable MCP requires Authorization header', async (t) => {
+  const port = 4950 + Math.floor(Math.random() * 200);
   const child = spawn(process.execPath, ['dist/index.js', '--transport=http'], {
     cwd: new URL('..', import.meta.url),
     env: {
       ...process.env,
       PORT: String(port),
       MUSASHI_API_BASE_URL: 'http://127.0.0.1:3000',
-      MUSASHI_MCP_API_KEY: 'mcp_sk_test_surface_key',
+      MUSASHI_MCP_API_KEY: 'mcp_sk_auth_required_key',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  t.after(async () => {
+    await stopChildProcess(child);
+  });
+
+  await waitForHealth(`http://127.0.0.1:${port}/health`);
+
+  const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'MCP-Protocol-Version': '2025-06-18',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'auth-test', version: '1.0.0' },
+      },
+    }),
+  });
+
+  assert.equal(response.status, 401);
+});
+
+test('Streamable MCP sessions are bound to authenticated principal', async (t) => {
+  const port = 5150 + Math.floor(Math.random() * 200);
+  const child = spawn(process.execPath, ['dist/index.js', '--transport=http'], {
+    cwd: new URL('..', import.meta.url),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      MUSASHI_API_BASE_URL: 'http://127.0.0.1:3000',
+      MCP_API_KEYS: 'mcp_sk_session_owner_key,mcp_sk_different_owner_key',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -73,7 +112,7 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'MCP-Protocol-Version': '2025-06-18',
-      Authorization: 'Bearer mcp_sk_test_surface_key',
+      Authorization: 'Bearer mcp_sk_session_owner_key',
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -82,7 +121,7 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
       params: {
         protocolVersion: '2025-06-18',
         capabilities: {},
-        clientInfo: { name: 'surface-test', version: '1.0.0' },
+        clientInfo: { name: 'auth-test', version: '1.0.0' },
       },
     }),
   });
@@ -91,14 +130,14 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
   const sessionId = initializeResponse.headers.get('mcp-session-id');
   assert.ok(sessionId);
 
-  const promptsListResponse = await fetch(`http://127.0.0.1:${port}/mcp`, {
+  const mismatchedPrincipalResponse = await fetch(`http://127.0.0.1:${port}/mcp`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'MCP-Protocol-Version': '2025-06-18',
       'Mcp-Session-Id': sessionId,
-      Authorization: 'Bearer mcp_sk_test_surface_key',
+      Authorization: 'Bearer mcp_sk_different_owner_key',
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -107,54 +146,5 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
     }),
   });
 
-  const promptsListPayload = await promptsListResponse.json();
-  assert.equal(promptsListResponse.status, 200);
-  assert.ok(Array.isArray(promptsListPayload.result.prompts));
-  assert.ok(promptsListPayload.result.prompts.some((prompt) => prompt.name === 'find_arbitrage_now'));
-
-  const promptGetResponse = await fetch(`http://127.0.0.1:${port}/mcp`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'MCP-Protocol-Version': '2025-06-18',
-      'Mcp-Session-Id': sessionId,
-      Authorization: 'Bearer mcp_sk_test_surface_key',
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 3,
-      method: 'prompts/get',
-      params: {
-        name: 'find_arbitrage_now',
-        arguments: {
-          minSpread: '0.02',
-        },
-      },
-    }),
-  });
-
-  const promptGetPayload = await promptGetResponse.json();
-  assert.equal(promptGetResponse.status, 200);
-  assert.match(promptGetPayload.result.messages[0].content.text, /arbitrage opportunities/i);
-
-  const resourcesListResponse = await fetch(`http://127.0.0.1:${port}/mcp`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'MCP-Protocol-Version': '2025-06-18',
-      'Mcp-Session-Id': sessionId,
-      Authorization: 'Bearer mcp_sk_test_surface_key',
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 4,
-      method: 'resources/list',
-    }),
-  });
-
-  const resourcesListPayload = await resourcesListResponse.json();
-  assert.equal(resourcesListResponse.status, 200);
-  assert.deepEqual(resourcesListPayload.result, { resources: [] });
+  assert.equal(mismatchedPrincipalResponse.status, 403);
 });

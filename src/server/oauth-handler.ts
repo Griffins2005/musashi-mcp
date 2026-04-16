@@ -19,9 +19,20 @@ interface OAuthClientRecord {
   tokenEndpointAuthMethod: 'none' | 'client_secret_post';
 }
 
+interface AccessTokenClaims {
+  sub: string;
+  client_id: string;
+  scope: string;
+  exp: number;
+  iat: number;
+  jti: string;
+}
+
 const authCodes = new Map<string, AuthorizationCodeRecord>();
 const oauthClients = new Map<string, OAuthClientRecord>();
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
+const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+const accessTokenSecret = process.env.MCP_OAUTH_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
 
 setInterval(() => {
   const now = Date.now();
@@ -43,6 +54,80 @@ function getRegisteredClient(clientId: string | undefined): OAuthClientRecord | 
   }
 
   return oauthClients.get(clientId) ?? null;
+}
+
+function getAccessTokenSigningKey(): Buffer {
+  return crypto.createHash('sha256').update(accessTokenSecret).digest();
+}
+
+function encodeBase64UrlJson(value: object): string {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+function signAccessToken(tokenBody: string): string {
+  return crypto.createHmac('sha256', getAccessTokenSigningKey()).update(tokenBody).digest('base64url');
+}
+
+function buildApiKeySubject(apiKey: string): string {
+  return crypto.createHash('sha256').update(apiKey).digest('hex');
+}
+
+function issueAccessToken(apiKey: string, clientId: string): { token: string; expiresIn: number } {
+  const now = Math.floor(Date.now() / 1000);
+  const claims: AccessTokenClaims = {
+    sub: buildApiKeySubject(apiKey),
+    client_id: clientId,
+    scope: 'mcp:read mcp:write',
+    iat: now,
+    exp: now + ACCESS_TOKEN_TTL_SECONDS,
+    jti: crypto.randomBytes(12).toString('hex'),
+  };
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const encodedHeader = encodeBase64UrlJson(header);
+  const encodedClaims = encodeBase64UrlJson(claims);
+  const signingInput = `${encodedHeader}.${encodedClaims}`;
+  const signature = signAccessToken(signingInput);
+  return { token: `${signingInput}.${signature}`, expiresIn: ACCESS_TOKEN_TTL_SECONDS };
+}
+
+export function verifyOAuthAccessToken(token: string): AccessTokenClaims | null {
+  if (!token || typeof token !== 'string') {
+    return null;
+  }
+  const segments = token.split('.');
+  if (segments.length !== 3) {
+    return null;
+  }
+  const [encodedHeader, encodedClaims, signature] = segments;
+  if (!encodedHeader || !encodedClaims || !signature) {
+    return null;
+  }
+  const signingInput = `${encodedHeader}.${encodedClaims}`;
+  const expectedSignature = signAccessToken(signingInput);
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (
+    signatureBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
+  ) {
+    return null;
+  }
+  try {
+    const parsedClaims = JSON.parse(Buffer.from(encodedClaims, 'base64url').toString('utf8')) as AccessTokenClaims;
+    if (
+      typeof parsedClaims.exp !== 'number' ||
+      typeof parsedClaims.sub !== 'string' ||
+      typeof parsedClaims.client_id !== 'string'
+    ) {
+      return null;
+    }
+    if (parsedClaims.exp <= Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    return parsedClaims;
+  } catch {
+    return null;
+  }
 }
 
 function buildClientMetadata(client: OAuthClientRecord) {
@@ -214,10 +299,10 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
         ? req.body.code_challenge_method
         : '';
 
-  if (!redirectUri || !state) {
+  if (!clientId || !redirectUri || !state) {
     res.status(400).json({
       error: 'invalid_request',
-      error_description: 'Missing required parameters',
+      error_description: 'Missing required parameters (client_id, redirect_uri, state)',
     });
     return;
   }
@@ -230,8 +315,16 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
     return;
   }
 
-  const client = getRegisteredClient(clientId || undefined);
-  if (client && !client.redirectUris.includes(redirectUri)) {
+  const client = getRegisteredClient(clientId);
+  if (!client) {
+    res.status(400).json({
+      error: 'invalid_client',
+      error_description: 'Unknown or unregistered client_id',
+    });
+    return;
+  }
+
+  if (!client.redirectUris.includes(redirectUri)) {
     res.status(400).json({
       error: 'invalid_request',
       error_description: 'redirect_uri does not match registered client',
@@ -265,7 +358,7 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
     const code = `auth_${crypto.randomBytes(32).toString('hex')}`;
     authCodes.set(code, {
       apiKey,
-      clientId: clientId || undefined,
+      clientId,
       redirectUri,
       expiresAt: Date.now() + AUTH_CODE_TTL_MS,
       codeChallenge: codeChallenge || undefined,
@@ -305,10 +398,10 @@ export function handleOAuthToken(req: Request, res: Response): void {
     return;
   }
 
-  if (!code) {
+  if (!code || !clientId || !redirectUri) {
     res.status(400).json({
       error: 'invalid_request',
-      error_description: 'Missing authorization code',
+      error_description: 'Missing required parameters (code, client_id, redirect_uri)',
     });
     return;
   }
@@ -331,7 +424,7 @@ export function handleOAuthToken(req: Request, res: Response): void {
     return;
   }
 
-  if (authData.clientId && clientId !== authData.clientId) {
+  if (!authData.clientId || clientId !== authData.clientId) {
     res.status(400).json({
       error: 'invalid_grant',
       error_description: 'client_id does not match authorization code',
@@ -339,7 +432,7 @@ export function handleOAuthToken(req: Request, res: Response): void {
     return;
   }
 
-  if (redirectUri && redirectUri !== authData.redirectUri) {
+  if (redirectUri !== authData.redirectUri) {
     res.status(400).json({
       error: 'invalid_grant',
       error_description: 'redirect_uri does not match authorization code',
@@ -348,7 +441,15 @@ export function handleOAuthToken(req: Request, res: Response): void {
   }
 
   const client = getRegisteredClient(authData.clientId);
-  if (client?.tokenEndpointAuthMethod === 'client_secret_post' && client.clientSecret !== clientSecret) {
+  if (!client) {
+    res.status(400).json({
+      error: 'invalid_client',
+      error_description: 'Unknown or unregistered client_id',
+    });
+    return;
+  }
+
+  if (client.tokenEndpointAuthMethod === 'client_secret_post' && client.clientSecret !== clientSecret) {
     res.status(401).json({
       error: 'invalid_client',
       error_description: 'Invalid client authentication',
@@ -379,11 +480,12 @@ export function handleOAuthToken(req: Request, res: Response): void {
   }
 
   authCodes.delete(code);
+  const accessToken = issueAccessToken(authData.apiKey, client.clientId);
 
   res.json({
-    access_token: authData.apiKey,
+    access_token: accessToken.token,
     token_type: 'Bearer',
-    expires_in: 31_536_000,
+    expires_in: accessToken.expiresIn,
     scope: 'mcp:read mcp:write',
   });
 }

@@ -8,12 +8,14 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { randomBytes } from 'crypto';
 import { hourlyRateLimiter } from './rate-limiter.js';
+import { extractApiKey, verifyApiKey } from '../transports/auth.js';
 import {
   handleOAuthAuthorize,
   handleOAuthDiscovery,
   handleOAuthProtectedResourceMetadata,
   handleOAuthRegister,
   handleOAuthToken,
+  verifyOAuthAccessToken,
 } from './oauth-handler.js';
 
 // Supported MCP protocol version
@@ -22,6 +24,7 @@ const LEGACY_PROTOCOL_VERSION = '2025-03-26';
 
 interface Session {
   id: string;
+  principal: string;
   createdAt: Date;
   expiresAt: Date;
   sseStreams: Set<Response>;
@@ -45,6 +48,7 @@ export class StreamableHttpServer {
   private onResponse: (sessionId: string | null, response: any) => Promise<void>;
 
   private readonly SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor(options: StreamableHttpServerOptions) {
     this.app = express();
@@ -212,10 +216,48 @@ export class StreamableHttpServer {
     });
   }
 
+  private getRequestPrincipal(req: Request): string | null {
+    const authorization = req.headers.authorization;
+    const apiKey = extractApiKey(authorization);
+    if (apiKey && verifyApiKey(apiKey)) {
+      return `apikey:${apiKey}`;
+    }
+
+    const bearerToken = authorization?.startsWith('Bearer ')
+      ? authorization.slice('Bearer '.length).trim()
+      : '';
+    if (!bearerToken) {
+      return null;
+    }
+
+    const claims = verifyOAuthAccessToken(bearerToken);
+    if (!claims) {
+      return null;
+    }
+    return `oauth:${claims.sub}:${claims.client_id}`;
+  }
+
+  private ensureAuthenticated(req: Request, res: Response): string | null {
+    const principal = this.getRequestPrincipal(req);
+    if (!principal) {
+      res.setHeader('WWW-Authenticate', 'Bearer realm="musashi-mcp"');
+      res.status(401).json({
+        error: 'Unauthorized. Provide a valid API key or OAuth access token in Authorization: Bearer <token>.',
+      });
+      return null;
+    }
+    return principal;
+  }
+
   /**
    * Handle POST /mcp - Send JSON-RPC message to server
    */
   private async handlePost(req: Request, res: Response): Promise<void> {
+    const principal = this.ensureAuthenticated(req, res);
+    if (!principal) {
+      return;
+    }
+
     // Validate protocol version
     const protocolVersion = req.headers['mcp-protocol-version'] as string;
     if (!this.isValidProtocolVersion(protocolVersion)) {
@@ -262,10 +304,20 @@ export class StreamableHttpServer {
       return;
     }
 
+    if (sessionId) {
+      const session = this.sessions.get(sessionId);
+      if (!session || session.principal !== principal) {
+        res.status(403).json({
+          error: 'Session does not belong to this authenticated principal',
+        });
+        return;
+      }
+    }
+
     // Handle different JSON-RPC message types
     if ('method' in message && 'id' in message) {
       // JSON-RPC Request - respond with result or SSE stream
-      await this.handleJsonRpcRequest(sessionId || null, message, req, res);
+      await this.handleJsonRpcRequest(sessionId || null, message, req, res, principal);
     } else if ('method' in message && !('id' in message)) {
       // JSON-RPC Notification - acknowledge with 202
       await this.handleJsonRpcNotification(sessionId || null, message, res);
@@ -281,6 +333,11 @@ export class StreamableHttpServer {
    * Handle GET /mcp - Open SSE stream for server messages
    */
   private async handleGet(req: Request, res: Response): Promise<void> {
+    const principal = this.ensureAuthenticated(req, res);
+    if (!principal) {
+      return;
+    }
+
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     // Validate Accept header
@@ -303,6 +360,12 @@ export class StreamableHttpServer {
     if (!session) {
       res.status(404).json({
         error: 'Session not found or expired',
+      });
+      return;
+    }
+    if (session.principal !== principal) {
+      res.status(403).json({
+        error: 'Session does not belong to this authenticated principal',
       });
       return;
     }
@@ -334,6 +397,11 @@ export class StreamableHttpServer {
    * Handle DELETE /mcp - Terminate session
    */
   private async handleDelete(req: Request, res: Response): Promise<void> {
+    const principal = this.ensureAuthenticated(req, res);
+    if (!principal) {
+      return;
+    }
+
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId) {
@@ -347,6 +415,12 @@ export class StreamableHttpServer {
     if (!session) {
       res.status(404).json({
         error: 'Session not found or expired',
+      });
+      return;
+    }
+    if (session.principal !== principal) {
+      res.status(403).json({
+        error: 'Session does not belong to this authenticated principal',
       });
       return;
     }
@@ -373,7 +447,8 @@ export class StreamableHttpServer {
     sessionId: string | null,
     request: any,
     _req: Request,
-    res: Response
+    res: Response,
+    principal: string
   ): Promise<void> {
     try {
       // Special handling for initialize request
@@ -381,7 +456,7 @@ export class StreamableHttpServer {
         const result = await this.onRequest(null, request);
 
         // Create new session
-        const newSessionId = this.createSession();
+        const newSessionId = this.createSession(principal);
         const session = this.sessions.get(newSessionId)!;
         session.initialized = true;
 
@@ -492,12 +567,13 @@ export class StreamableHttpServer {
   /**
    * Create new session
    */
-  private createSession(): string {
+  private createSession(principal: string): string {
     const sessionId = `mcp_${randomBytes(16).toString('hex')}`;
     const now = new Date();
 
     this.sessions.set(sessionId, {
       id: sessionId,
+      principal,
       createdAt: now,
       expiresAt: new Date(now.getTime() + this.SESSION_TTL_MS),
       sseStreams: new Set(),
@@ -570,7 +646,7 @@ export class StreamableHttpServer {
    * Start cleanup job
    */
   private startCleanupJob(): void {
-    setInterval(() => {
+    this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredSessions();
     }, 5 * 60 * 1000); // Every 5 minutes
   }
@@ -606,6 +682,10 @@ export class StreamableHttpServer {
     return new Promise((resolve) => {
       if (this.server) {
         console.log('[Streamable HTTP] Shutting down gracefully...');
+        if (this.cleanupInterval) {
+          clearInterval(this.cleanupInterval);
+          this.cleanupInterval = null;
+        }
 
         // Close all sessions
         for (const session of this.sessions.values()) {

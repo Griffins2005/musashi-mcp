@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 
+const VALID_KEY = 'mcp_sk_test_surface_key';
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -56,7 +58,7 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
       ...process.env,
       PORT: String(port),
       MUSASHI_API_BASE_URL: 'http://127.0.0.1:3000',
-      MUSASHI_MCP_API_KEY: 'mcp_sk_test_surface_key',
+      MUSASHI_MCP_API_KEY: VALID_KEY,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -73,7 +75,7 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'MCP-Protocol-Version': '2025-06-18',
-      Authorization: 'Bearer mcp_sk_test_surface_key',
+      Authorization: `Bearer ${VALID_KEY}`,
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -98,7 +100,7 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
       Accept: 'application/json',
       'MCP-Protocol-Version': '2025-06-18',
       'Mcp-Session-Id': sessionId,
-      Authorization: 'Bearer mcp_sk_test_surface_key',
+      Authorization: `Bearer ${VALID_KEY}`,
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -119,7 +121,7 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
       Accept: 'application/json',
       'MCP-Protocol-Version': '2025-06-18',
       'Mcp-Session-Id': sessionId,
-      Authorization: 'Bearer mcp_sk_test_surface_key',
+      Authorization: `Bearer ${VALID_KEY}`,
     },
     body: JSON.stringify({
       jsonrpc: '2.0',
@@ -145,7 +147,7 @@ test('MCP surface exposes prompts and empty resources', async (t) => {
       Accept: 'application/json',
       'MCP-Protocol-Version': '2025-06-18',
       'Mcp-Session-Id': sessionId,
-      Authorization: 'Bearer mcp_sk_test_surface_key',
+      Authorization: `Bearer ${VALID_KEY}`,
     },
     body: JSON.stringify({
       jsonrpc: '2.0',

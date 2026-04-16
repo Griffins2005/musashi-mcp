@@ -106,6 +106,17 @@ test('OAuth register creates a public client and token exchange requires PKCE ve
   const client = await registerResponse.json();
   assert.equal(typeof client.client_id, 'string');
 
+  const authorizeFormResponse = await fetch(`http://127.0.0.1:${port}/oauth/authorize?${new URLSearchParams({
+    client_id: client.client_id,
+    redirect_uri: 'https://chatgpt.com/connector/oauth/callback',
+    state: 'state-form',
+    code_challenge: 'plain-verifier',
+    code_challenge_method: 'plain',
+  })}`);
+  assert.equal(authorizeFormResponse.status, 200);
+  const authorizeFormHtml = await authorizeFormResponse.text();
+  assert.match(authorizeFormHtml, new RegExp(`name="client_id" value="${client.client_id}"`));
+
   const formData = new URLSearchParams({
     client_id: client.client_id,
     redirect_uri: 'https://chatgpt.com/connector/oauth/callback',

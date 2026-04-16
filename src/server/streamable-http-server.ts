@@ -8,7 +8,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { randomBytes } from 'crypto';
 import { hourlyRateLimiter } from './rate-limiter.js';
-import { extractApiKey, verifyApiKey } from '../transports/auth.js';
+import { extractApiKey, verifyApiKey, getTruncatedKey } from '../transports/auth.js';
 import {
   handleOAuthAuthorize,
   handleOAuthDiscovery,
@@ -63,32 +63,23 @@ export class StreamableHttpServer {
   }
 
   private setupMiddleware(): void {
-    // CORS configuration - MUST validate Origin to prevent DNS rebinding
     const ALLOWED_ORIGINS = [
-      // OpenAI clients
       'https://chatgpt.com',
       'https://www.chatgpt.com',
       'https://chat.openai.com',
-
-      // Anthropic clients
       'https://claude.ai',
       'https://www.claude.ai',
       'https://api.anthropic.com',
-
-      // Local development
       'http://localhost:3000',
       'http://localhost:5173',
     ];
 
     const corsMiddleware = cors({
       origin: (origin, callback) => {
-        // Security: Validate Origin header to prevent DNS rebinding attacks
         if (!origin) {
-          // Allow requests with no origin (curl, mobile apps)
           callback(null, true);
           return;
         }
-
         if (ALLOWED_ORIGINS.includes(origin)) {
           callback(null, true);
         } else {
@@ -101,39 +92,32 @@ export class StreamableHttpServer {
     });
 
     this.app.use((req: Request, res: Response, next: NextFunction) => {
-      // OAuth authorize is served as a top-level page and form POST, not a cross-origin API.
-      // Bypass CORS here so the browser can render and submit the authorization form normally.
       if (req.path === '/oauth/authorize') {
         next();
         return;
       }
-
       corsMiddleware(req, res, next);
     });
 
-    // JSON body parsing
     this.app.use(express.json());
     this.app.use(express.urlencoded({ extended: true }));
 
-    // Request logging
     this.app.use((req: Request, _res: Response, next: NextFunction) => {
       const sessionId = req.headers['mcp-session-id'] || 'none';
       console.log(`[Streamable HTTP] ${req.method} ${req.path} - Session: ${sessionId}`);
       next();
     });
 
-    // Apply rate limiters
     this.app.use(hourlyRateLimiter);
   }
 
   private setupRoutes(): void {
     const handleMcpRoute = async (req: Request, res: Response) => {
       try {
-        if (req.method === 'POST') {
-          await this.handlePost(req, res);
-        } else if (req.method === 'GET') {
-          const accept = req.headers['accept'] as string | undefined;
-          const sessionId = req.headers['mcp-session-id'] as string | undefined;
+        // ── Public GET: discovery info, no auth required ────────────────────────
+        if (req.method === 'GET') {
+          const accept    = req.headers['accept']           as string | undefined;
+          const sessionId = req.headers['mcp-session-id']  as string | undefined;
 
           if (!sessionId && (!accept || !accept.includes('text/event-stream'))) {
             res.status(200).json({
@@ -146,12 +130,37 @@ export class StreamableHttpServer {
             });
             return;
           }
+        }
 
+        // ── OPTIONS: CORS preflight, no auth required ───────────────────────────
+        if (req.method === 'OPTIONS') {
+          res.status(200).end();
+          return;
+        }
+
+        // ── Auth gate: all other requests require a valid Bearer token ──────────
+        const apiKey = extractApiKey(req.headers['authorization'] as string | undefined);
+
+        if (!apiKey) {
+          res.status(401).json({
+            error: 'Unauthorized: Authorization header with valid Bearer token required',
+          });
+          return;
+        }
+
+        if (!verifyApiKey(apiKey)) {
+          console.warn(`[Streamable HTTP] Rejected invalid API key: ${getTruncatedKey(apiKey)}`);
+          res.status(401).json({ error: 'Unauthorized: invalid API key' });
+          return;
+        }
+
+        // ── Dispatch ────────────────────────────────────────────────────────────
+        if (req.method === 'POST') {
+          await this.handlePost(req, res);
+        } else if (req.method === 'GET') {
           await this.handleGet(req, res);
         } else if (req.method === 'DELETE') {
           await this.handleDelete(req, res);
-        } else if (req.method === 'OPTIONS') {
-          res.status(200).end();
         } else {
           res.status(405).json({ error: 'Method not allowed. Use POST, GET, or DELETE.' });
         }
@@ -161,7 +170,7 @@ export class StreamableHttpServer {
       }
     };
 
-    // Health check endpoint (public, no MCP protocol)
+    // Health check endpoint (public, no auth)
     this.app.get('/health', (_req: Request, res: Response) => {
       res.json({
         status: 'healthy',
@@ -182,11 +191,9 @@ export class StreamableHttpServer {
     this.app.post('/oauth/register', handleOAuthRegister);
     this.app.post('/oauth/token', handleOAuthToken);
 
-    // Accept both the explicit MCP endpoint and the bare host URL.
     this.app.all('/', handleMcpRoute);
     this.app.all('/mcp', handleMcpRoute);
 
-    // 404 handler
     this.app.use((_req: Request, res: Response) => {
       res.status(404).json({
         error: 'Not found',
@@ -209,7 +216,6 @@ export class StreamableHttpServer {
       });
     });
 
-    // Error handler
     this.app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
       console.error('[Streamable HTTP] Error:', err);
       res.status(500).json({ error: err.message });
@@ -267,10 +273,8 @@ export class StreamableHttpServer {
       return;
     }
 
-    // Get session ID from header
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    // Validate Accept header
     const accept = req.headers['accept'] as string;
     if (!accept || (!accept.includes('application/json') && !accept.includes('text/event-stream'))) {
       res.status(400).json({
@@ -279,16 +283,12 @@ export class StreamableHttpServer {
       return;
     }
 
-    // Validate JSON-RPC message
     const message = req.body;
     if (!this.isValidJsonRpcMessage(message)) {
-      res.status(400).json({
-        error: 'Invalid JSON-RPC message format',
-      });
+      res.status(400).json({ error: 'Invalid JSON-RPC message format' });
       return;
     }
 
-    // Check if session is required (all messages except initialize)
     if (message.method !== 'initialize' && !sessionId) {
       res.status(400).json({
         error: 'Mcp-Session-Id header required for all requests except initialize',
@@ -296,11 +296,8 @@ export class StreamableHttpServer {
       return;
     }
 
-    // Verify session exists if provided
     if (sessionId && !this.sessions.has(sessionId)) {
-      res.status(404).json({
-        error: 'Session not found or expired',
-      });
+      res.status(404).json({ error: 'Session not found or expired' });
       return;
     }
 
@@ -319,19 +316,14 @@ export class StreamableHttpServer {
       // JSON-RPC Request - respond with result or SSE stream
       await this.handleJsonRpcRequest(sessionId || null, message, req, res, principal);
     } else if ('method' in message && !('id' in message)) {
-      // JSON-RPC Notification - acknowledge with 202
       await this.handleJsonRpcNotification(sessionId || null, message, res);
     } else if ('result' in message || 'error' in message) {
-      // JSON-RPC Response - acknowledge with 202
       await this.handleJsonRpcResponse(sessionId || null, message, res);
     } else {
       res.status(400).json({ error: 'Invalid JSON-RPC message type' });
     }
   }
 
-  /**
-   * Handle GET /mcp - Open SSE stream for server messages
-   */
   private async handleGet(req: Request, res: Response): Promise<void> {
     const principal = this.ensureAuthenticated(req, res);
     if (!principal) {
@@ -340,27 +332,20 @@ export class StreamableHttpServer {
 
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-    // Validate Accept header
     const accept = req.headers['accept'] as string;
     if (!accept || !accept.includes('text/event-stream')) {
-      res.status(405).json({
-        error: 'Method Not Allowed. GET requires Accept: text/event-stream',
-      });
+      res.status(405).json({ error: 'Method Not Allowed. GET requires Accept: text/event-stream' });
       return;
     }
 
     if (!sessionId) {
-      res.status(400).json({
-        error: 'Mcp-Session-Id header required for GET requests',
-      });
+      res.status(400).json({ error: 'Mcp-Session-Id header required for GET requests' });
       return;
     }
 
     const session = this.sessions.get(sessionId);
     if (!session) {
-      res.status(404).json({
-        error: 'Session not found or expired',
-      });
+      res.status(404).json({ error: 'Session not found or expired' });
       return;
     }
     if (session.principal !== principal) {
@@ -370,22 +355,18 @@ export class StreamableHttpServer {
       return;
     }
 
-    // Open SSE stream
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
 
-    // Add this stream to session
     session.sseStreams.add(res);
     console.log(`[Streamable HTTP] Opened SSE stream for session ${sessionId} (${session.sseStreams.size} total)`);
 
-    // Send keepalive every 30 seconds
     const keepaliveInterval = setInterval(() => {
       res.write(': keepalive\n\n');
     }, 30000);
 
-    // Handle client disconnect
     req.on('close', () => {
       clearInterval(keepaliveInterval);
       session.sseStreams.delete(res);
@@ -393,9 +374,6 @@ export class StreamableHttpServer {
     });
   }
 
-  /**
-   * Handle DELETE /mcp - Terminate session
-   */
   private async handleDelete(req: Request, res: Response): Promise<void> {
     const principal = this.ensureAuthenticated(req, res);
     if (!principal) {
@@ -405,17 +383,13 @@ export class StreamableHttpServer {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (!sessionId) {
-      res.status(400).json({
-        error: 'Mcp-Session-Id header required for DELETE requests',
-      });
+      res.status(400).json({ error: 'Mcp-Session-Id header required for DELETE requests' });
       return;
     }
 
     const session = this.sessions.get(sessionId);
     if (!session) {
-      res.status(404).json({
-        error: 'Session not found or expired',
-      });
+      res.status(404).json({ error: 'Session not found or expired' });
       return;
     }
     if (session.principal !== principal) {
@@ -425,24 +399,15 @@ export class StreamableHttpServer {
       return;
     }
 
-    // Close all SSE streams
     for (const stream of session.sseStreams) {
-      try {
-        stream.end();
-      } catch (error) {
-        // Ignore errors
-      }
+      try { stream.end(); } catch { /* ignore */ }
     }
 
     this.sessions.delete(sessionId);
     console.log(`[Streamable HTTP] Terminated session ${sessionId}`);
-
     res.status(200).json({ success: true });
   }
 
-  /**
-   * Handle JSON-RPC Request
-   */
   private async handleJsonRpcRequest(
     sessionId: string | null,
     request: any,
@@ -451,7 +416,6 @@ export class StreamableHttpServer {
     principal: string
   ): Promise<void> {
     try {
-      // Special handling for initialize request
       if (request.method === 'initialize') {
         const result = await this.onRequest(null, request);
 
@@ -459,44 +423,30 @@ export class StreamableHttpServer {
         const newSessionId = this.createSession(principal);
         const session = this.sessions.get(newSessionId)!;
         session.initialized = true;
-
-        // Return session ID in header
         res.setHeader('Mcp-Session-Id', newSessionId);
         res.status(200).json(result);
-
         console.log(`[Streamable HTTP] Created session ${newSessionId} via initialize`);
         return;
       }
 
-      // Process request via callback
       const result = await this.onRequest(sessionId, request);
 
-      // Update session activity
       if (sessionId) {
         const session = this.sessions.get(sessionId);
-        if (session) {
-          session.lastActivity = new Date();
-        }
+        if (session) session.lastActivity = new Date();
       }
 
-      // Return JSON response
       res.status(200).json(result);
     } catch (error: any) {
       console.error('[Streamable HTTP] Request processing failed:', error);
       res.status(500).json({
         jsonrpc: '2.0',
         id: request.id,
-        error: {
-          code: -32603,
-          message: error.message || 'Internal error',
-        },
+        error: { code: -32603, message: error.message || 'Internal error' },
       });
     }
   }
 
-  /**
-   * Handle JSON-RPC Notification
-   */
   private async handleJsonRpcNotification(
     sessionId: string | null,
     notification: any,
@@ -509,17 +459,11 @@ export class StreamableHttpServer {
       console.error('[Streamable HTTP] Notification processing failed:', error);
       res.status(400).json({
         jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: error.message || 'Internal error',
-        },
+        error: { code: -32603, message: error.message || 'Internal error' },
       });
     }
   }
 
-  /**
-   * Handle JSON-RPC Response
-   */
   private async handleJsonRpcResponse(
     sessionId: string | null,
     response: any,
@@ -532,22 +476,14 @@ export class StreamableHttpServer {
       console.error('[Streamable HTTP] Response processing failed:', error);
       res.status(400).json({
         jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: error.message || 'Internal error',
-        },
+        error: { code: -32603, message: error.message || 'Internal error' },
       });
     }
   }
 
-  /**
-   * Send message to session via SSE
-   */
   sendMessage(sessionId: string, message: any): boolean {
     const session = this.sessions.get(sessionId);
-    if (!session || session.sseStreams.size === 0) {
-      return false;
-    }
+    if (!session || session.sseStreams.size === 0) return false;
 
     const data = JSON.stringify(message);
     let sent = false;
@@ -570,7 +506,6 @@ export class StreamableHttpServer {
   private createSession(principal: string): string {
     const sessionId = `mcp_${randomBytes(16).toString('hex')}`;
     const now = new Date();
-
     this.sessions.set(sessionId, {
       id: sessionId,
       principal,
@@ -580,58 +515,31 @@ export class StreamableHttpServer {
       lastActivity: now,
       initialized: false,
     });
-
     return sessionId;
   }
 
-  /**
-   * Validate protocol version
-   */
   private isValidProtocolVersion(version: string | undefined): boolean {
-    if (!version) {
-      // Assume legacy version if not provided
-      return true;
-    }
+    if (!version) return true;
     return version === SUPPORTED_PROTOCOL_VERSION || version === LEGACY_PROTOCOL_VERSION;
   }
 
-  /**
-   * Validate JSON-RPC message format
-   */
   private isValidJsonRpcMessage(message: any): boolean {
-    if (!message || typeof message !== 'object') {
-      return false;
-    }
-
-    if (message.jsonrpc !== '2.0') {
-      return false;
-    }
-
-    // Must have either method (request/notification) or result/error (response)
+    if (!message || typeof message !== 'object') return false;
+    if (message.jsonrpc !== '2.0') return false;
     const hasMethod = 'method' in message;
     const hasResult = 'result' in message || 'error' in message;
-
     return hasMethod || hasResult;
   }
 
-  /**
-   * Cleanup expired sessions
-   */
   private cleanupExpiredSessions(): void {
     const now = new Date();
     let expiredCount = 0;
 
     for (const [sessionId, session] of this.sessions.entries()) {
       if (now > session.expiresAt) {
-        // Close all SSE streams
         for (const stream of session.sseStreams) {
-          try {
-            stream.end();
-          } catch (error) {
-            // Ignore
-          }
+          try { stream.end(); } catch { /* ignore */ }
         }
-
         this.sessions.delete(sessionId);
         expiredCount++;
       }
@@ -642,18 +550,12 @@ export class StreamableHttpServer {
     }
   }
 
-  /**
-   * Start cleanup job
-   */
   private startCleanupJob(): void {
     this.cleanupInterval = setInterval(() => {
       this.cleanupExpiredSessions();
     }, 5 * 60 * 1000); // Every 5 minutes
   }
 
-  /**
-   * Start HTTP server
-   */
   async start(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
@@ -664,7 +566,6 @@ export class StreamableHttpServer {
           console.log(`[Streamable HTTP] MCP endpoint: http://0.0.0.0:${port}/mcp`);
           resolve();
         });
-
         this.server.on('error', (error: Error) => {
           console.error('[Streamable HTTP] Server error:', error);
           reject(error);
@@ -675,9 +576,6 @@ export class StreamableHttpServer {
     });
   }
 
-  /**
-   * Stop HTTP server gracefully
-   */
   async stop(): Promise<void> {
     return new Promise((resolve) => {
       if (this.server) {
@@ -690,21 +588,14 @@ export class StreamableHttpServer {
         // Close all sessions
         for (const session of this.sessions.values()) {
           for (const stream of session.sseStreams) {
-            try {
-              stream.end();
-            } catch (error) {
-              // Ignore
-            }
+            try { stream.end(); } catch { /* ignore */ }
           }
         }
         this.sessions.clear();
-
         this.server.close(() => {
           console.log('[Streamable HTTP] Server closed');
           resolve();
         });
-
-        // Force close after 5 seconds
         setTimeout(() => {
           console.log('[Streamable HTTP] Force closing server');
           resolve();

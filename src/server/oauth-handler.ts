@@ -36,11 +36,8 @@ const accessTokenSecret = process.env.MCP_OAUTH_TOKEN_SECRET || crypto.randomByt
 
 setInterval(() => {
   const now = Date.now();
-
   for (const [code, record] of authCodes.entries()) {
-    if (record.expiresAt < now) {
-      authCodes.delete(code);
-    }
+    if (record.expiresAt < now) authCodes.delete(code);
   }
 }, 60_000);
 
@@ -167,9 +164,11 @@ function escapeHtml(value: string): string {
 }
 
 function renderAuthorizeForm(options: {
+  clientId?: string;
   redirectUri: string;
   state: string;
   codeChallenge?: string;
+  codeChallengeMethod?: string;
   error?: string;
 }): string {
   const errorBlock = options.error
@@ -198,11 +197,13 @@ function renderAuthorizeForm(options: {
   <p>Claude is requesting access to your Musashi MCP server.</p>
   <div class="info">Enter a valid Musashi MCP API key to authorize access.</div>
   ${errorBlock}
-  <form method="POST">
-    <input type="password" name="api_key" placeholder="mcp_sk_..." required autofocus />
-    <input type="hidden" name="redirect_uri" value="${escapeHtml(options.redirectUri)}" />
-    <input type="hidden" name="state" value="${escapeHtml(options.state)}" />
+	  <form method="POST">
+	    <input type="password" name="api_key" placeholder="mcp_sk_..." required autofocus />
+	    <input type="hidden" name="client_id" value="${escapeHtml(options.clientId || '')}" />
+	    <input type="hidden" name="redirect_uri" value="${escapeHtml(options.redirectUri)}" />
+	    <input type="hidden" name="state" value="${escapeHtml(options.state)}" />
     <input type="hidden" name="code_challenge" value="${escapeHtml(options.codeChallenge || '')}" />
+    <input type="hidden" name="code_challenge_method" value="${escapeHtml(options.codeChallengeMethod || 'S256')}" />
     <button type="submit">Authorize Access</button>
   </form>
 </body>
@@ -211,7 +212,6 @@ function renderAuthorizeForm(options: {
 
 export function handleOAuthDiscovery(req: Request, res: Response): void {
   const baseUrl = getBaseUrl(req);
-
   res.json({
     issuer: baseUrl,
     authorization_endpoint: `${baseUrl}/oauth/authorize`,
@@ -226,7 +226,6 @@ export function handleOAuthDiscovery(req: Request, res: Response): void {
 
 export function handleOAuthProtectedResourceMetadata(req: Request, res: Response): void {
   const baseUrl = getBaseUrl(req);
-
   res.json({
     resource: `${baseUrl}/mcp`,
     authorization_servers: [baseUrl],
@@ -292,12 +291,19 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
       : typeof req.body?.code_challenge === 'string'
         ? req.body.code_challenge
         : '';
-  const codeChallengeMethod =
+  const rawCodeChallengeMethod =
     typeof req.query.code_challenge_method === 'string'
       ? req.query.code_challenge_method
       : typeof req.body?.code_challenge_method === 'string'
         ? req.body.code_challenge_method
         : '';
+
+  const codeChallengeMethod: 'S256' | 'plain' =
+    rawCodeChallengeMethod === ''
+      ? 'plain'
+      : rawCodeChallengeMethod === 'plain'
+        ? 'plain'
+        : 'S256';
 
   if (!clientId || !redirectUri || !state) {
     res.status(400).json({
@@ -332,7 +338,11 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
     return;
   }
 
-  if (codeChallenge && !isSupportedCodeChallengeMethod(codeChallengeMethod || 'plain')) {
+  if (
+    codeChallenge &&
+    rawCodeChallengeMethod &&
+    !isSupportedCodeChallengeMethod(rawCodeChallengeMethod)
+  ) {
     res.status(400).json({
       error: 'invalid_request',
       error_description: 'Unsupported code_challenge_method',
@@ -346,9 +356,11 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
     if (!apiKey || !verifyApiKey(apiKey)) {
       res.status(401).send(
         renderAuthorizeForm({
+          clientId,
           redirectUri,
           state,
           codeChallenge,
+          codeChallengeMethod,
           error: 'Invalid API key. Please try again.',
         })
       );
@@ -362,7 +374,7 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
       redirectUri,
       expiresAt: Date.now() + AUTH_CODE_TTL_MS,
       codeChallenge: codeChallenge || undefined,
-      codeChallengeMethod: codeChallenge ? (codeChallengeMethod || 'plain') as 'S256' | 'plain' : undefined,
+      codeChallengeMethod: codeChallenge ? codeChallengeMethod : undefined,
     });
 
     const redirectUrl = new URL(redirectUri);
@@ -375,16 +387,18 @@ export function handleOAuthAuthorize(req: Request, res: Response): void {
 
   res.send(
     renderAuthorizeForm({
+      clientId,
       redirectUri,
       state,
       codeChallenge,
+      codeChallengeMethod,
     })
   );
 }
 
 export function handleOAuthToken(req: Request, res: Response): void {
-  const grantType = typeof req.body?.grant_type === 'string' ? req.body.grant_type : '';
-  const code = typeof req.body?.code === 'string' ? req.body.code : '';
+  const grantType    = typeof req.body?.grant_type    === 'string' ? req.body.grant_type    : '';
+  const code         = typeof req.body?.code          === 'string' ? req.body.code          : '';
   const codeVerifier = typeof req.body?.code_verifier === 'string' ? req.body.code_verifier : '';
   const clientId = typeof req.body?.client_id === 'string' ? req.body.client_id : '';
   const clientSecret = typeof req.body?.client_secret === 'string' ? req.body.client_secret : '';
@@ -461,7 +475,7 @@ export function handleOAuthToken(req: Request, res: Response): void {
     if (!codeVerifier) {
       res.status(400).json({
         error: 'invalid_grant',
-        error_description: 'Missing code_verifier',
+        error_description: 'code_verifier is required when code_challenge was used',
       });
       return;
     }
@@ -474,9 +488,9 @@ export function handleOAuthToken(req: Request, res: Response): void {
       res.status(400).json({
         error: 'invalid_grant',
         error_description: 'Code verifier does not match challenge',
-    });
-    return;
-  }
+      });
+      return;
+    }
   }
 
   authCodes.delete(code);

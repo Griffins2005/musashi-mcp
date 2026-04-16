@@ -243,7 +243,6 @@ get_wallet_positions({
 get_market_wallet_flow({
   marketId?: string;
   conditionId?: string;
-  tokenId?: string;
   query?: string;
   window?: '1h' | '24h' | '7d';
   limit?: number;
@@ -259,7 +258,6 @@ get_smart_money_markets({
 get_market_brief({
   marketId?: string;
   conditionId?: string;
-  tokenId?: string;
   query?: string;
   category?: string;
   window?: '1h' | '24h' | '7d';
@@ -269,7 +267,6 @@ get_market_brief({
 explain_market_move({
   marketId?: string;
   conditionId?: string;
-  tokenId?: string;
   query?: string;
   category?: string;
   window?: '1h' | '24h' | '7d';

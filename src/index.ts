@@ -77,7 +77,6 @@ interface OptionalJsonResult {
 interface MarketIdentity {
   marketId?: string;
   conditionId?: string;
-  tokenId?: string;
   query?: string;
   title?: string;
   category?: string;
@@ -123,21 +122,19 @@ function getMarketIdentity(args: JsonRecord): MarketIdentity {
   return {
     marketId: getStringArg(args.marketId),
     conditionId: getStringArg(args.conditionId),
-    tokenId: getStringArg(args.tokenId),
     query: getStringArg(args.query),
     category: getStringArg(args.category),
   };
 }
 
 function hasMarketIdentity(identity: MarketIdentity): boolean {
-  return Boolean(identity.marketId || identity.conditionId || identity.tokenId || identity.query);
+  return Boolean(identity.marketId || identity.conditionId || identity.query);
 }
 
 function buildMarketIdentityParams(identity: MarketIdentity): URLSearchParams {
   const params = new URLSearchParams();
   if (identity.marketId) params.set('marketId', identity.marketId);
   if (identity.conditionId) params.set('conditionId', identity.conditionId);
-  if (identity.tokenId) params.set('tokenId', identity.tokenId);
   if (identity.query) params.set('query', identity.query);
   return params;
 }
@@ -151,7 +148,6 @@ function enrichMarketIdentity(
     ...base,
     marketId: base.marketId || getStringArg(flow?.marketId) || getStringArg(market?.id),
     conditionId: base.conditionId || getStringArg(flow?.conditionId) || stripPolymarketPrefix(getStringArg(market?.id)),
-    tokenId: base.tokenId || getStringArg(flow?.tokenId),
     title: getStringArg(flow?.marketTitle) || getStringArg(market?.title) || base.query,
     category: base.category || getStringArg(market?.category),
   };
@@ -241,7 +237,6 @@ function marketMatchesIdentity(
   if (identity.marketId && equalsIgnoreCase(marketId, identity.marketId)) return true;
   if (identity.marketId && equalsIgnoreCase(stripPolymarketPrefix(identity.marketId), conditionId)) return true;
   if (identity.conditionId && equalsIgnoreCase(conditionId, identity.conditionId)) return true;
-  if (identity.tokenId && equalsIgnoreCase(getStringArg(market.tokenId), identity.tokenId)) return true;
 
   return textMatchesIdentity(marketTitle, identity, title);
 }
@@ -448,7 +443,6 @@ class MusashiMcpServer {
             properties: {
               marketId: { type: 'string', description: 'Musashi or Polymarket market id.' },
               conditionId: { type: 'string', description: 'Polymarket condition id.' },
-              tokenId: { type: 'string', description: 'Polymarket token id.' },
               query: { type: 'string', description: 'Market search text.' },
               window: { type: 'string', enum: ['1h', '24h', '7d'], description: 'Flow time window.' },
               limit: { type: 'number', minimum: 1, maximum: 100, description: 'Max activity rows.' },
@@ -476,7 +470,6 @@ class MusashiMcpServer {
             properties: {
               marketId: { type: 'string', description: 'Musashi or Polymarket market id.' },
               conditionId: { type: 'string', description: 'Polymarket condition id.' },
-              tokenId: { type: 'string', description: 'Polymarket token id.' },
               query: { type: 'string', description: 'Market search text.' },
               category: { type: 'string', description: 'Optional Musashi category.' },
               window: { type: 'string', enum: ['1h', '24h', '7d'], description: 'Wallet-flow window.' },
@@ -492,7 +485,6 @@ class MusashiMcpServer {
             properties: {
               marketId: { type: 'string', description: 'Musashi or Polymarket market id.' },
               conditionId: { type: 'string', description: 'Polymarket condition id.' },
-              tokenId: { type: 'string', description: 'Polymarket token id.' },
               query: { type: 'string', description: 'Market search text.' },
               category: { type: 'string', description: 'Optional Musashi category.' },
               window: { type: 'string', enum: ['1h', '24h', '7d'], description: 'Wallet-flow window.' },
@@ -926,7 +918,6 @@ class MusashiMcpServer {
 
     if (args.marketId) params.set('marketId', String(args.marketId));
     if (args.conditionId) params.set('conditionId', String(args.conditionId));
-    if (args.tokenId) params.set('tokenId', String(args.tokenId));
     if (args.query) params.set('query', String(args.query));
     if (args.window) params.set('window', String(args.window));
     if (args.limit !== undefined) params.set('limit', String(args.limit));
@@ -1151,7 +1142,7 @@ class MusashiMcpServer {
   private async loadMarketContext(args: JsonRecord): Promise<MarketContext> {
     const baseIdentity = getMarketIdentity(args);
     if (!hasMarketIdentity(baseIdentity)) {
-      throw new Error('Provide marketId, conditionId, tokenId, or query.');
+      throw new Error('Provide marketId, conditionId, or query.');
     }
 
     const flowParams = buildMarketIdentityParams(baseIdentity);
@@ -1165,7 +1156,7 @@ class MusashiMcpServer {
     const flow = getFlowFromPayload(flowResult.payload);
     let market = getMarketFromFlowPayload(flowResult.payload);
     let identity = enrichMarketIdentity(baseIdentity, flow, market);
-    let title = identity.title || identity.query || identity.marketId || identity.conditionId || identity.tokenId || 'market';
+    let title = identity.title || identity.query || identity.marketId || identity.conditionId || 'market';
 
     const analysisText = identity.query || title;
     const analysisResult = analysisText

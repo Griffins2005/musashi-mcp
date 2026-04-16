@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
-export const WALLET = '0x0000000000000000000000000000000000000000';
+export const WALLET = process.env.MUSASHI_MCP_TEST_WALLET || '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+const WALLET_PATTERN = new RegExp(escapeRegExp(WALLET));
 
 export const REQUIRED_TOOLS = [
   'get_wallet_activity',
@@ -15,12 +16,12 @@ export const TOOL_FORMAT_CASES = [
   {
     name: 'get_wallet_activity',
     arguments: { wallet: WALLET, limit: 1 },
-    requiredText: [/Wallet activity/, /Will BTC hit 100k/, /Value: \$7.44/],
+    requiredText: [/Wallet activity/, WALLET_PATTERN, /Will BTC hit 100k/, /Value: \$7.44/],
   },
   {
     name: 'get_wallet_positions',
     arguments: { wallet: WALLET, minValue: 0, limit: 1 },
-    requiredText: [/Wallet positions/, /Will ETH hit 10k/, /Unrealized PnL: \$-1/],
+    requiredText: [/Wallet positions/, WALLET_PATTERN, /Will ETH hit 10k/, /Unrealized PnL: \$-1/],
   },
   {
     name: 'get_market_wallet_flow',
@@ -62,4 +63,8 @@ export function assertToolText(text, patterns) {
   for (const pattern of patterns) {
     assert.match(text, pattern);
   }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

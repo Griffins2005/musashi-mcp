@@ -12,6 +12,7 @@ import {
   handleOAuthAuthorize,
   handleOAuthDiscovery,
   handleOAuthProtectedResourceMetadata,
+  handleOAuthRegister,
   handleOAuthToken,
 } from './oauth-handler.js';
 import { extractApiKey, verifyApiKey, getTruncatedKey } from '../transports/auth.js';
@@ -184,6 +185,7 @@ export class StreamableHttpServer {
     this.app.get('/.well-known/oauth-protected-resource', handleOAuthProtectedResourceMetadata);
     this.app.get('/oauth/authorize', handleOAuthAuthorize);
     this.app.post('/oauth/authorize', handleOAuthAuthorize);
+    this.app.post('/oauth/register', handleOAuthRegister);
     this.app.post('/oauth/token', handleOAuthToken);
 
     this.app.all('/', handleMcpRoute);
@@ -199,6 +201,7 @@ export class StreamableHttpServer {
           'GET /.well-known/oauth-authorization-server',
           'GET /oauth/authorize',
           'POST /oauth/authorize',
+          'POST /oauth/register',
           'POST /oauth/token',
           'POST / (send JSON-RPC messages)',
           'POST /mcp (send JSON-RPC messages)',

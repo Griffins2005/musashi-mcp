@@ -13,6 +13,65 @@ const MCP_PROTOCOL_VERSION = '2025-06-18';
 
 type JsonRecord = Record<string, any>;
 
+interface PromptDefinition {
+  name: string;
+  title: string;
+  description: string;
+  arguments?: Array<{
+    name: string;
+    description: string;
+    required?: boolean;
+  }>;
+}
+
+const PROMPTS: PromptDefinition[] = [
+  {
+    name: 'find_arbitrage_now',
+    title: 'Find Arbitrage Now',
+    description:
+      'Use Musashi to find current arbitrage opportunities between Polymarket and Kalshi.',
+    arguments: [
+      {
+        name: 'minSpread',
+        description: 'Optional minimum spread as a decimal, for example 0.02 for 2%.',
+      },
+      {
+        name: 'limit',
+        description: 'Optional maximum number of opportunities to return.',
+      },
+    ],
+  },
+  {
+    name: 'show_market_movers',
+    title: 'Show Market Movers',
+    description:
+      'Use Musashi to show markets with the biggest recent price moves.',
+    arguments: [
+      {
+        name: 'minChange',
+        description: 'Optional minimum price move as a decimal, for example 0.03 for 3%.',
+      },
+      {
+        name: 'limit',
+        description: 'Optional maximum number of movers to return.',
+      },
+    ],
+  },
+  {
+    name: 'ground_a_claim',
+    title: 'Ground A Claim',
+    description:
+      'Use Musashi to compare a real-world claim to current market-implied probability.',
+    arguments: [
+      {
+        name: 'claim',
+        description: 'The claim or prediction to evaluate against live market data.',
+        required: true,
+      },
+    ],
+  },
+];
+
 function formatPercent(value: number | null | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return 'n/a';
@@ -305,6 +364,8 @@ class MusashiMcpServer {
       {
         capabilities: {
           tools: {},
+          prompts: {},
+          resources: {},
         },
       }
     );
@@ -327,11 +388,16 @@ class MusashiMcpServer {
       tools: [
         {
           name: 'analyze_text',
-          description: 'Analyze text against live Polymarket and Kalshi markets and return Musashi signal data.',
+          description:
+            'Use this when the user asks Musashi to analyze a claim, tweet, headline, or free-form text against live market data.',
           inputSchema: {
             type: 'object',
             properties: {
-              text: { type: 'string', description: 'Text to analyze.' },
+              text: {
+                type: 'string',
+                description:
+                  'The text, claim, tweet, or statement to analyze against live markets.',
+              },
               minConfidence: { type: 'number', minimum: 0, maximum: 1 },
               maxResults: { type: 'number', minimum: 1, maximum: 100 },
             },
@@ -340,36 +406,73 @@ class MusashiMcpServer {
         },
         {
           name: 'get_arbitrage',
-          description: 'Find live cross-platform arbitrage opportunities across Polymarket and Kalshi.',
+          description:
+            'Use this when the user asks what can be arbitraged right now between Polymarket and Kalshi, or asks for cross-platform spread opportunities.',
           inputSchema: {
             type: 'object',
             properties: {
-              minSpread: { type: 'number', minimum: 0, maximum: 1 },
-              minConfidence: { type: 'number', minimum: 0, maximum: 1 },
-              limit: { type: 'number', minimum: 1, maximum: 100 },
-              category: { type: 'string' },
+              minSpread: {
+                type: 'number',
+                minimum: 0,
+                maximum: 1,
+                description: 'Optional minimum spread threshold as a decimal, for example 0.02 for 2%.',
+              },
+              minConfidence: {
+                type: 'number',
+                minimum: 0,
+                maximum: 1,
+                description: 'Optional minimum cross-platform match confidence.',
+              },
+              limit: {
+                type: 'number',
+                minimum: 1,
+                maximum: 100,
+                description: 'Optional maximum number of opportunities to return.',
+              },
+              category: {
+                type: 'string',
+                description: 'Optional market category filter.',
+              },
             },
           },
         },
         {
           name: 'get_movers',
-          description: 'Return markets with significant price changes.',
+          description:
+            'Use this when the user asks for biggest movers, largest price changes, or what markets are moving now.',
           inputSchema: {
             type: 'object',
             properties: {
-              minChange: { type: 'number', minimum: 0, maximum: 1 },
-              limit: { type: 'number', minimum: 1, maximum: 100 },
-              category: { type: 'string' },
+              minChange: {
+                type: 'number',
+                minimum: 0,
+                maximum: 1,
+                description: 'Optional minimum price move threshold as a decimal.',
+              },
+              limit: {
+                type: 'number',
+                minimum: 1,
+                maximum: 100,
+                description: 'Optional maximum number of movers to return.',
+              },
+              category: {
+                type: 'string',
+                description: 'Optional market category filter.',
+              },
             },
           },
         },
         {
           name: 'ground_probability',
-          description: 'Ground a probability claim in live market prices and compare it to an LLM estimate.',
+          description:
+            'Use this when the user asks for the market-implied probability of a claim, or wants a prediction grounded in live markets.',
           inputSchema: {
             type: 'object',
             properties: {
-              claim: { type: 'string' },
+              claim: {
+                type: 'string',
+                description: 'The real-world claim or prediction to ground in live market data.',
+              },
               llm_estimate: { type: 'number', minimum: 0, maximum: 1 },
               min_confidence: { type: 'number', minimum: 0, maximum: 1 },
               max_markets: { type: 'number', minimum: 1, maximum: 20 },
@@ -379,7 +482,8 @@ class MusashiMcpServer {
         },
         {
           name: 'get_feed',
-          description: 'Fetch analyzed tweets from the Musashi feed.',
+          description:
+            'Use this when the user asks for recent feed items, analyzed tweets, breaking signals, or social/news flow from Musashi.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -395,7 +499,8 @@ class MusashiMcpServer {
         },
         {
           name: 'get_feed_stats',
-          description: 'Fetch summary statistics for the Musashi Twitter feed.',
+          description:
+            'Use this when the user asks for Musashi feed statistics, volume, urgency mix, or top-mentioned markets.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -403,7 +508,8 @@ class MusashiMcpServer {
         },
         {
           name: 'get_feed_accounts',
-          description: 'List the curated Twitter accounts Musashi tracks.',
+          description:
+            'Use this when the user asks which accounts or sources Musashi monitors.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -495,7 +601,8 @@ class MusashiMcpServer {
         },
         {
           name: 'get_health',
-          description: 'Check API health and upstream market-source status.',
+          description:
+            'Use this when the user asks whether Musashi is healthy, available, or up to date.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -503,6 +610,71 @@ class MusashiMcpServer {
         },
       ],
     };
+  }
+
+  private listPrompts(): JsonRecord {
+    return {
+      prompts: PROMPTS.map((prompt) => ({
+        name: prompt.name,
+        title: prompt.title,
+        description: prompt.description,
+        arguments: prompt.arguments ?? [],
+      })),
+    };
+  }
+
+  private getPrompt(name: string, args: JsonRecord): JsonRecord {
+    switch (name) {
+      case 'find_arbitrage_now': {
+        const minSpread = args.minSpread ? ` with a minimum spread of ${args.minSpread}` : '';
+        const limit = args.limit ? ` and return up to ${args.limit} opportunities` : '';
+        return {
+          description: 'Find current arbitrage opportunities between Polymarket and Kalshi.',
+          messages: [
+            {
+              role: 'user',
+              content: {
+                type: 'text',
+                text: `Use Musashi to find current arbitrage opportunities between Polymarket and Kalshi${minSpread}${limit}.`,
+              },
+            },
+          ],
+        };
+      }
+      case 'show_market_movers': {
+        const minChange = args.minChange ? ` with a minimum move of ${args.minChange}` : '';
+        const limit = args.limit ? ` and return up to ${args.limit} markets` : '';
+        return {
+          description: 'Show the biggest market movers right now.',
+          messages: [
+            {
+              role: 'user',
+              content: {
+                type: 'text',
+                text: `Use Musashi to show the biggest market movers right now${minChange}${limit}.`,
+              },
+            },
+          ],
+        };
+      }
+      case 'ground_a_claim': {
+        const claim = typeof args.claim === 'string' && args.claim.trim() ? args.claim.trim() : 'this claim';
+        return {
+          description: 'Ground a claim in live market probabilities.',
+          messages: [
+            {
+              role: 'user',
+              content: {
+                type: 'text',
+                text: `Use Musashi to ground the probability of this claim in live market data: ${claim}`,
+              },
+            },
+          ],
+        };
+      }
+      default:
+        throw new Error(`Unknown prompt: ${name}`);
+    }
   }
 
   private async callTool(name: string, args: JsonRecord): Promise<JsonRecord> {
@@ -1297,6 +1469,8 @@ class MusashiMcpServer {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {
             tools: {},
+            prompts: {},
+            resources: {},
           },
           serverInfo: {
             name: 'musashi',
@@ -1308,6 +1482,21 @@ class MusashiMcpServer {
 
     if (method === 'tools/list') {
       return { jsonrpc: '2.0', id, result: this.listTools() };
+    }
+
+    if (method === 'prompts/list') {
+      return { jsonrpc: '2.0', id, result: this.listPrompts() };
+    }
+
+    if (method === 'prompts/get') {
+      const promptName = typeof params?.name === 'string' ? params.name : '';
+      const promptArgs =
+        params?.arguments && typeof params.arguments === 'object' ? params.arguments as JsonRecord : {};
+      return { jsonrpc: '2.0', id, result: this.getPrompt(promptName, promptArgs) };
+    }
+
+    if (method === 'resources/list') {
+      return { jsonrpc: '2.0', id, result: { resources: [] } };
     }
 
     if (method === 'tools/call') {

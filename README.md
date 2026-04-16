@@ -40,6 +40,12 @@ OAuth discovery endpoint:
 https://musashi-production.up.railway.app/.well-known/oauth-authorization-server
 ```
 
+OAuth dynamic client registration endpoint:
+
+```text
+https://musashi-production.up.railway.app/oauth/register
+```
+
 To authorize access, the server expects a valid `mcp_sk_...` key from `MCP_API_KEYS` or `MUSASHI_MCP_API_KEY`.
 
 ## Connect from Claude
@@ -70,8 +76,9 @@ https://musashi-production.up.railway.app/mcp
 ```
 
 4. Leave authentication as `OAuth`.
-5. If manual OAuth asks for a client ID, a stable value such as `chatgpt-musashi` works.
-6. Complete the Musashi authorization form with a valid `mcp_sk_...` key.
+5. If ChatGPT uses automatic registration, continue with the discovered OAuth settings.
+6. If ChatGPT asks for manual client credentials, use a client created via the registration endpoint above.
+7. Complete the Musashi authorization form with a valid `mcp_sk_...` key.
 
 If the connection succeeds, ChatGPT should be able to discover and call Musashi tools from chat.
 
